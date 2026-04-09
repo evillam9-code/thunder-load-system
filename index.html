@@ -4064,9 +4064,72 @@ function filterTable(tableId, query){
 }
 </script>
 
-<!-- Firebase not connected -->
-<script>
-// Firebase not configured
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDazqOB9hsUwvFw_cyInOwjvUWX9LTNjBA",
+    authDomain: "thunder-load.firebaseapp.com",
+    projectId: "thunder-load",
+    storageBucket: "thunder-load.firebasestorage.app",
+    messagingSenderId: "312200877815",
+    appId: "1:312200877815:web:ea7a5a5879323f5270a5f2"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // Claves a sincronizar
+  const KEYS = ['users','clientes','prestamos','pagos','gastos','nomina','nomina_pagos','config','log'];
+
+  // Guardar en Firestore cuando cambia localStorage
+  window._fbSave = async function(key) {
+    try {
+      const val = localStorage.getItem('tls_' + key);
+      if(val) await setDoc(doc(db, 'data', key), { value: val });
+    } catch(e) { console.warn('FB save error', e); }
+  };
+
+  // Sobreescribir sDB para que también guarde en Firebase
+  const _origSDB = window.sDB;
+  window.sDB = function(key) {
+    if(_origSDB) _origSDB(key);
+    window._fbSave(key);
+  };
+
+  // Cargar datos desde Firestore al iniciar
+  async function loadFromFirebase() {
+    for(const key of KEYS) {
+      try {
+        const snap = await getDoc(doc(db, 'data', key));
+        if(snap.exists()) {
+          localStorage.setItem('tls_' + key, snap.data().value);
+        }
+      } catch(e) { console.warn('FB load error', e); }
+    }
+    // Recargar DB después de cargar datos
+    if(window.loadDB) window.loadDB();
+  }
+
+  // Escuchar cambios en tiempo real
+  KEYS.forEach(key => {
+    onSnapshot(doc(db, 'data', key), (snap) => {
+      if(snap.exists()) {
+        const current = localStorage.getItem('tls_' + key);
+        if(current !== snap.data().value) {
+          localStorage.setItem('tls_' + key, snap.data().value);
+          if(window.loadDB) window.loadDB();
+        }
+      }
+    });
+  });
+
+  // Iniciar carga
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(loadFromFirebase, 500);
+  });
 </script>
 </body>
 </html>
