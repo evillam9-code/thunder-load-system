@@ -512,7 +512,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   if(loginBtn){ loginBtn.disabled=true; loginBtn.textContent='Conectando...'; }
   try {
     // Dar tiempo a Firebase para cargar
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 3000));
     // Recargar DB con datos de Firebase
     const keys=['users','clientes','prestamos','pagos','gastos','nomina','nomina_pagos','config','log'];
     keys.forEach(k=>{
