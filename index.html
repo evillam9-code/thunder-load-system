@@ -505,9 +505,25 @@ function addLog(accion,detalle){
 let currentUser=null;
 let loginIntentos=0,loginBloqueado=false,loginTimer=null;
 
-document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('login-empresa').textContent = DB.config.empresa||'Sistema de Préstamos';
+document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('li-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+  // Esperar Firebase antes de permitir login
+  const loginBtn = document.querySelector('.btn-login');
+  if(loginBtn){ loginBtn.disabled=true; loginBtn.textContent='Conectando...'; }
+  try {
+    // Dar tiempo a Firebase para cargar
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Recargar DB con datos de Firebase
+    const keys=['users','clientes','prestamos','pagos','gastos','nomina','nomina_pagos','config','log'];
+    keys.forEach(k=>{
+      const v=localStorage.getItem('tl_'+k);
+      if(v){ try{ DB[k]=JSON.parse(v); }catch(e){} }
+    });
+  } catch(e){ console.warn('Firebase init error:', e); }
+  finally {
+    if(loginBtn){ loginBtn.disabled=false; loginBtn.textContent='Ingresar al sistema'; }
+  }
+  document.getElementById('login-empresa').textContent = DB.config.empresa||'Sistema de Préstamos';
   applyConfig();
   applyEstilos();
 });
@@ -4087,7 +4103,7 @@ function filterTable(tableId, query){
   // Guardar en Firestore cuando cambia localStorage
   window._fbSave = async function(key) {
     try {
-      const val = localStorage.getItem('tls_' + key);
+      const val = localStorage.getItem('tl_' + key);
       if(val) await setDoc(doc(db, 'data', key), { value: val });
     } catch(e) { console.warn('FB save error', e); }
   };
@@ -4105,7 +4121,7 @@ function filterTable(tableId, query){
       try {
         const snap = await getDoc(doc(db, 'data', key));
         if(snap.exists()) {
-          localStorage.setItem('tls_' + key, snap.data().value);
+          localStorage.setItem('tl_' + key, snap.data().value);
         }
       } catch(e) { console.warn('FB load error', e); }
     }
@@ -4117,9 +4133,9 @@ function filterTable(tableId, query){
   KEYS.forEach(key => {
     onSnapshot(doc(db, 'data', key), (snap) => {
       if(snap.exists()) {
-        const current = localStorage.getItem('tls_' + key);
+        const current = localStorage.getItem('tl_' + key);
         if(current !== snap.data().value) {
-          localStorage.setItem('tls_' + key, snap.data().value);
+          localStorage.setItem('tl_' + key, snap.data().value);
           if(window.loadDB) window.loadDB();
         }
       }
