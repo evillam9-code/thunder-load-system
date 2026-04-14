@@ -200,6 +200,41 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 /* PROGRESS */
 .progress-bar{height:6px;background:var(--gray3);border-radius:3px;overflow:hidden;margin-top:4px}
 .progress-fill{height:100%;border-radius:3px;transition:.3s}
+/* ══════════════════════════════════
+   RESPONSIVE MÓVIL
+══════════════════════════════════ */
+.sidebar-toggle{display:none}
+.sidebar-overlay{display:none;position:fixed;inset:0;top:56px;background:rgba(0,0,0,.4);z-index:199}
+.sidebar-overlay.open{display:block}
+@media(max-width:768px){
+  .login-card{width:92vw;padding:32px 20px}
+  .topbar{padding:0 12px;gap:8px}
+  .topbar-brand{font-size:14px}
+  .user-name{display:none}
+  .sidebar-toggle{display:flex!important;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.12);border:none;color:#fff;font-size:20px;cursor:pointer;flex-shrink:0;margin-right:4px}
+  .sidebar{position:fixed;top:56px;left:0;height:calc(100vh - 56px);z-index:200;transform:translateX(-100%);transition:transform .25s ease;box-shadow:4px 0 24px rgba(0,0,0,.18);width:240px!important}
+  .sidebar.open{transform:translateX(0)}
+  .layout{flex-direction:column}
+  .main{padding:14px 12px}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat-card{padding:14px}
+  .stat-value{font-size:17px}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:8px}
+  table{min-width:500px;font-size:12px}
+  th,td{padding:8px 10px}
+  .card{padding:14px}
+  .btn{padding:9px 14px;font-size:13px}
+  .btn-sm{padding:6px 10px;font-size:11px}
+  .modal-box{width:94vw!important;max-width:94vw!important;padding:20px 16px;max-height:88vh;overflow-y:auto}
+  select,input[type=text],input[type=number],input[type=date],input[type=email],input[type=password],textarea{font-size:16px!important}
+  .page-header h1{font-size:18px}
+  .r-wrap{flex-direction:column}
+  .r-half{width:100%!important}
+}
+@media(max-width:400px){
+  .stats-grid{grid-template-columns:1fr 1fr}
+  .login-card{padding:24px 14px}
+}
 /* FACTURA PRINT */
 @media print{
   /* Modo normal — ocultar todo excepto el contenido de impresión */
@@ -288,9 +323,16 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 </div>
 <!-- ══ APP ══ -->
 <div id="app">
+  <!-- Overlay para cerrar sidebar en móvil -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
   <!-- TOPBAR -->
   <div class="topbar">
+    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Menú">☰</button>
     <div class="topbar-brand">🏦 <span id="top-empresa">Préstamos</span></div>
+    <div id="fb-status" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin-left:8px">
+      <span id="fb-dot" style="width:7px;height:7px;border-radius:50%;background:#6b7280;display:inline-block"></span>
+      <span id="fb-text">Conectando...</span>
+    </div>
     <div class="topbar-spacer"></div>
     <div class="topbar-user" onclick="toggleUserMenu()">
       <div class="user-avatar" id="user-initials">A</div>
@@ -640,36 +682,7 @@ function startAlertSystem(){
   }
 }
 
-function doLogin(){
-  if(loginBloqueado){document.getElementById('login-blocked').style.display='block';return;}
-  const u=document.getElementById('li-user').value.trim();
-  const p=document.getElementById('li-pass').value;
-  const user=DB.users.find(x=>x.username===u&&x.password===p&&x.activo);
-  if(!user){
-    loginIntentos++;
-    const r=3-loginIntentos;
-    if(loginIntentos>=3){
-      loginBloqueado=true;
-      document.getElementById('login-error').style.display='none';
-      document.getElementById('login-blocked').style.display='block';
-      document.getElementById('li-user').disabled=true;
-      document.getElementById('li-pass').disabled=true;
-      document.querySelector('.btn-login').disabled=true;
-      let s=30;document.getElementById('login-countdown').textContent=s;
-      loginTimer=setInterval(()=>{
-        s--;document.getElementById('login-countdown').textContent=s;
-        if(s<=0){clearInterval(loginTimer);loginBloqueado=false;loginIntentos=0;
-          document.getElementById('login-blocked').style.display='none';
-          document.getElementById('li-user').disabled=false;document.getElementById('li-pass').disabled=false;
-          document.querySelector('.btn-login').disabled=false;document.getElementById('li-pass').value='';
-        }
-      },1000);
-    } else {
-      document.getElementById('login-error').textContent=`Invalid username or password. ${r} attempt${r===1?'':'s'} remaining${r===1?'':'s'}.`;
-      document.getElementById('login-error').style.display='block';
-    }
-    return;
-  }
+function _ejecutarLogin(user){
   loginIntentos=0;loginBloqueado=false;if(loginTimer)clearInterval(loginTimer);
   currentUser=user;
   addLog('LOGIN','Inicio de sesión exitoso');
@@ -680,8 +693,93 @@ function doLogin(){
   document.getElementById('user-initials').textContent=user.nombre.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
   buildNav();
   applyConfig();
-  mostrarBienvenida(user);
-  setTimeout(startAlertSystem, 1500);
+  if(typeof fbIniciar==='function'){
+    fbIniciar().then(()=>{ mostrarBienvenida(user); setTimeout(startAlertSystem,1500); });
+  } else {
+    mostrarBienvenida(user);
+    setTimeout(startAlertSystem,1500);
+  }
+}
+
+function doLogin(){
+  if(loginBloqueado){document.getElementById('login-blocked').style.display='block';return;}
+  const u=document.getElementById('li-user').value.trim();
+  const p=document.getElementById('li-pass').value;
+
+  // Buscar primero en datos locales
+  const user=DB.users.find(x=>x.username===u&&x.password===p&&x.activo);
+  if(user){ _ejecutarLogin(user); return; }
+
+  // Si no está local, consultar Firebase antes de rechazar
+  if(typeof fbCargar==='function'){
+    const btnLogin=document.querySelector('.btn-login');
+    const errEl=document.getElementById('login-error');
+    errEl.style.display='none';
+    if(btnLogin){ btnLogin.disabled=true; btnLogin.textContent='Verificando...'; }
+    fbCargar().then(()=>{
+      if(btnLogin){ btnLogin.disabled=false; btnLogin.textContent='Login'; }
+      const userFB=DB.users.find(x=>x.username===u&&x.password===p&&x.activo);
+      if(userFB){
+        _ejecutarLogin(userFB);
+      } else {
+        loginIntentos++;
+        const r=3-loginIntentos;
+        if(loginIntentos>=3){
+          loginBloqueado=true;
+          errEl.style.display='none';
+          document.getElementById('login-blocked').style.display='block';
+          document.getElementById('li-user').disabled=true;
+          document.getElementById('li-pass').disabled=true;
+          btnLogin.disabled=true;
+          let s=30;document.getElementById('login-countdown').textContent=s;
+          loginTimer=setInterval(()=>{
+            s--;document.getElementById('login-countdown').textContent=s;
+            if(s<=0){clearInterval(loginTimer);loginBloqueado=false;loginIntentos=0;
+              document.getElementById('login-blocked').style.display='none';
+              document.getElementById('li-user').disabled=false;
+              document.getElementById('li-pass').disabled=false;
+              btnLogin.disabled=false;
+              document.getElementById('li-pass').value='';
+            }
+          },1000);
+        } else {
+          errEl.textContent=`Usuario o contraseña incorrectos. ${r} intento${r===1?'':'s'} restante${r===1?'':'s'}.`;
+          errEl.style.display='block';
+        }
+      }
+    }).catch(()=>{
+      if(btnLogin){ btnLogin.disabled=false; btnLogin.textContent='Login'; }
+      loginIntentos++;
+      const r=3-loginIntentos;
+      document.getElementById('login-error').textContent=`Usuario o contraseña incorrectos. ${r} intento${r===1?'':'s'} restante${r===1?'':'s'}.`;
+      document.getElementById('login-error').style.display='block';
+    });
+    return;
+  }
+
+  // Sin Firebase: error normal
+  loginIntentos++;
+  const r=3-loginIntentos;
+  if(loginIntentos>=3){
+    loginBloqueado=true;
+    document.getElementById('login-error').style.display='none';
+    document.getElementById('login-blocked').style.display='block';
+    document.getElementById('li-user').disabled=true;
+    document.getElementById('li-pass').disabled=true;
+    document.querySelector('.btn-login').disabled=true;
+    let s=30;document.getElementById('login-countdown').textContent=s;
+    loginTimer=setInterval(()=>{
+      s--;document.getElementById('login-countdown').textContent=s;
+      if(s<=0){clearInterval(loginTimer);loginBloqueado=false;loginIntentos=0;
+        document.getElementById('login-blocked').style.display='none';
+        document.getElementById('li-user').disabled=false;document.getElementById('li-pass').disabled=false;
+        document.querySelector('.btn-login').disabled=false;document.getElementById('li-pass').value='';
+      }
+    },1000);
+  } else {
+    document.getElementById('login-error').textContent=`Usuario o contraseña incorrectos. ${r} intento${r===1?'':'s'} restante${r===1?'':'s'}.`;
+    document.getElementById('login-error').style.display='block';
+  }
 }
 
 function mostrarBienvenida(user){
@@ -723,6 +821,14 @@ function doLogout(){
 }
 
 function toggleUserMenu(){document.getElementById('user-menu').classList.toggle('open');}
+function toggleSidebar(){
+  const sb=document.getElementById('sidebar');
+  const ov=document.getElementById('sidebar-overlay');
+  if(!sb||!ov)return;
+  const isOpen=sb.classList.contains('open');
+  sb.classList.toggle('open',!isOpen);
+  ov.classList.toggle('open',!isOpen);
+}
 document.addEventListener('click',e=>{if(!e.target.closest('.topbar-user'))document.getElementById('user-menu').classList.remove('open');});
 
 function can(mod){return currentUser&&(isDueno()||currentUser.permisos?.includes(mod));}
@@ -779,6 +885,10 @@ function showPage(id){
   if(id!=='perfil'&&!can(id)){return;}
   const mod=MODULOS.find(m=>m.id===id);
   if(mod&&mod.adminOnly&&!isAdmin()){toast('Acceso restringido — solo Administrador','error');return;}
+  // Cerrar sidebar en móvil al navegar
+  const sb=document.getElementById('sidebar');
+  const ov=document.getElementById('sidebar-overlay');
+  if(sb&&window.innerWidth<=768){sb.classList.remove('open');if(ov)ov.classList.remove('open');}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const pg=document.getElementById('page-'+id);
@@ -4080,72 +4190,110 @@ function filterTable(tableId, query){
 }
 </script>
 
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+<!-- Firebase SDK (sistema robusto) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDazqOB9hsUwvFw_cyInOwjvUWX9LTNjBA",
+  authDomain: "thunder-load.firebaseapp.com",
+  projectId: "thunder-load",
+  storageBucket: "thunder-load.firebasestorage.app",
+  messagingSenderId: "312200877815",
+  appId: "1:312200877815:web:ea7a5a5879323f5270a5f2"
+};
+firebase.initializeApp(firebaseConfig);
+const _fbDB = firebase.firestore();
+const _fbCol = 'thunder';
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDazqOB9hsUwvFw_cyInOwjvUWX9LTNjBA",
-    authDomain: "thunder-load.firebaseapp.com",
-    projectId: "thunder-load",
-    storageBucket: "thunder-load.firebasestorage.app",
-    messagingSenderId: "312200877815",
-    appId: "1:312200877815:web:ea7a5a5879323f5270a5f2"
-  };
+async function fbGuardar(key){
+  try {
+    await _fbDB.collection(_fbCol).doc(key).set({
+      valor: JSON.stringify(DB[key] || (key==='config'?{}:[]))
+    });
+  } catch(e){ console.warn('FB save error:', e.message); }
+}
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  // Claves a sincronizar
-  const KEYS = ['users','clientes','prestamos','pagos','gastos','nomina','nomina_pagos','config','log'];
-
-  // Guardar en Firestore cuando cambia localStorage
-  window._fbSave = async function(key) {
+async function fbCargar(){
+  const keys=['config','users','clientes','prestamos','pagos','abonos','gastos','nomina_emp','nomina_pagos','log'];
+  let loaded=false;
+  for(const key of keys){
     try {
-      const val = localStorage.getItem('tl_' + key);
-      if(val) await setDoc(doc(db, 'data', key), { value: val });
-    } catch(e) { console.warn('FB save error', e); }
-  };
-
-  // Sobreescribir sDB para que también guarde en Firebase
-  const _origSDB = window.sDB;
-  window.sDB = function(key) {
-    if(_origSDB) _origSDB(key);
-    window._fbSave(key);
-  };
-
-  // Cargar datos desde Firestore al iniciar
-  async function loadFromFirebase() {
-    for(const key of KEYS) {
-      try {
-        const snap = await getDoc(doc(db, 'data', key));
-        if(snap.exists()) {
-          localStorage.setItem('tl_' + key, snap.data().value);
-        }
-      } catch(e) { console.warn('FB load error', e); }
-    }
-    // Recargar DB después de cargar datos
-    if(window.loadDB) window.loadDB();
-  }
-
-  // Escuchar cambios en tiempo real
-  KEYS.forEach(key => {
-    onSnapshot(doc(db, 'data', key), (snap) => {
-      if(snap.exists()) {
-        const current = localStorage.getItem('tl_' + key);
-        if(current !== snap.data().value) {
-          localStorage.setItem('tl_' + key, snap.data().value);
-          if(window.loadDB) window.loadDB();
+      const snap = await _fbDB.collection(_fbCol).doc(key).get();
+      if(snap.exists){
+        const val = JSON.parse(snap.data().valor);
+        if(val!==null){
+          // Para usuarios: fusionar Firebase con local, nunca perder usuarios
+          if(key==='users' && Array.isArray(val) && Array.isArray(DB[key])){
+            const merged = [...val];
+            DB[key].forEach(localUser => {
+              if(!merged.find(u=>u.id===localUser.id)) merged.push(localUser);
+            });
+            DB[key] = merged.length > 0 ? merged : DB[key];
+          } else {
+            DB[key]=val;
+          }
+          loaded=true;
         }
       }
-    });
-  });
+    } catch(e){ console.warn('FB load error:', e.message); }
+  }
+  // Guardar usuarios fusionados en localStorage
+  try{ ss('users', DB['users']); } catch(e){}
+  return loaded;
+}
 
-  // Iniciar carga
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(loadFromFirebase, 500);
-  });
+const _sDB_orig = sDB;
+window._fbActivo = false;
+window.sDB = function(key){
+  try { _sDB_orig(key); } catch(e){}
+  if(window._fbActivo){
+    const dot=document.getElementById('fb-dot');
+    const txt=document.getElementById('fb-text');
+    if(dot) dot.style.background='#f59e0b';
+    if(txt) txt.textContent='Guardando...';
+    fbGuardar(key).then(()=>{
+      if(dot) dot.style.background='#22c55e';
+      if(txt) txt.textContent='✓ Guardado';
+    }).catch(()=>{
+      if(dot) dot.style.background='#ef4444';
+      if(txt) txt.textContent='Error al guardar';
+    });
+  }
+};
+
+window.fbIniciar = async function(){
+  const dot=document.getElementById('fb-dot');
+  const txt=document.getElementById('fb-text');
+  const setStatus=(color,msg)=>{if(dot)dot.style.background=color;if(txt)txt.textContent=msg;};
+  setStatus('#f59e0b','Sincronizando...');
+  try {
+    const loaded = await fbCargar();
+    window._fbActivo = true;
+    if(loaded){
+      applyConfig();
+      if(typeof applyEstilos==='function') applyEstilos();
+      // Proteger sesión activa
+      if(currentUser){
+        const userActualizado = DB.users.find(u=>u.id===currentUser.id);
+        if(userActualizado){
+          currentUser = userActualizado;
+        } else {
+          DB.users.push(currentUser);
+          sDB('users');
+        }
+      }
+      setStatus('#22c55e','✓ Firebase');
+    } else {
+      const keys=['config','users','clientes','prestamos','pagos','abonos','gastos','nomina_emp','nomina_pagos','log'];
+      for(const k of keys) await fbGuardar(k);
+      setStatus('#22c55e','✓ Firebase');
+    }
+  } catch(e) {
+    setStatus('#ef4444','Sin conexión');
+    console.warn('Firebase error:', e.message);
+  }
+};
 </script>
 </body>
 </html>
