@@ -230,6 +230,8 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
   .page-header h1{font-size:18px}
   .r-wrap{flex-direction:column}
   .r-half{width:100%!important}
+  /* Layout two-col pasa a 1 columna en movil */
+  .two-col{grid-template-columns:1fr!important;gap:14px}
   /* FORMULARIOS MOVIL - campos mas grandes */
   .form-row.c2,.form-row.c3,.form-row.c4{grid-template-columns:1fr!important}
   .form-field{margin-bottom:20px}
@@ -243,6 +245,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
   .form-row.c2{grid-template-columns:1fr 1fr!important}
   .form-row.c3{grid-template-columns:1fr 1fr 1fr!important}
   .form-row.c4{grid-template-columns:1fr 1fr!important}
+  .two-col{grid-template-columns:1fr 1fr!important}
   .modal{max-height:95vh!important;overflow-y:auto!important}
 }
 @media(max-width:400px){
