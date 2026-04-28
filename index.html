@@ -170,7 +170,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:none;align-items:center;justify-content:center;padding:20px}
 .modal-overlay.open{display:flex}
-.modal{background:var(--white);border-radius:14px;padding:28px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
+.modal{background:var(--white);border-radius:14px;padding:28px;width:100%;max-width:820px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
 .modal-title{font-size:17px;font-weight:700;margin-bottom:20px;color:var(--navy)}
 .modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--gray3)}
 /* TOAST */
@@ -1759,10 +1759,15 @@ function verPrestamo(id){
     </div>
     <div style="max-height:360px;overflow-y:auto">
     <table class="amort-table">
-      <thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th></tr></thead>
+      <thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th>${(isAdmin()||canEdit('prestamos')||canDelete('prestamos'))?"<th></th>":""}</tr></thead>
       <tbody>${p.cuotas.map(c=>{
         const est=calcEstadoCuota(c);
         const bc={PAGADO:'badge-green',VENCIDA:'badge-red',PENDIENTE:'badge-amber',PARCIAL:'badge-purple'};
+        const _canEd=isAdmin()||canEdit('prestamos');
+        const _canDel=isAdmin()||canDelete('prestamos');
+        const _btnEd=_canEd?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago('${id}',${c.num})" title="Editar pago">&#x270F;</button>`:'';
+        const _btnDel=(_canDel&&est==='PAGADO')?`<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago('${id}',${c.num})" title="Revertir">&#x2717;</button>`:'';
+        const _btnAcc=(_canEd||_canDel)?`<td style="white-space:nowrap;text-align:center">${_btnEd}${_btnDel}</td>`:'';
         return`<tr>
           <td style="text-align:center">${c.num}</td>
           <td>${fmtDate(c.fechaCuota)}</td>
@@ -1771,6 +1776,7 @@ function verPrestamo(id){
           <td style="color:var(--red)">${c.multa?fmt(c.multa):'—'}</td>
           <td>${fmtDate(c.fechaPago)}</td>
           <td><span class="badge ${bc[est]}">${est}</span></td>
+          ${_btnAcc}
         </tr>`;}).join('')}
       </tbody>
     </table></div>`,
@@ -1779,6 +1785,86 @@ function verPrestamo(id){
      <button class="btn btn-amber" onclick="closeModal();imprimirPagare('${id}')">📄 Pagaré</button>
      ${p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?`<button class="btn btn-red" onclick="cancelarPrestamo('${id}')">❌ Cancelar</button>`:''}` );
 }
+
+// -- EDITAR PAGO (admin o permiso editar prestamos) --
+function editarPago(idPrestamo, numCuota){
+  if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);
+  if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);
+  if(!c)return;
+  const est=calcEstadoCuota(c);
+  openModal('Editar pago - Cuota #'+numCuota,`
+    <div style="display:grid;gap:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="form-label">Monto abonado</label>
+          <input id="ep-abono" type="number" class="form-input" value="${c.abono||0}" min="0" step="0.01"></div>
+        <div><label class="form-label">Fecha de pago</label>
+          <input id="ep-fecha" type="date" class="form-input" value="${c.fechaPago||''}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="form-label">Mora (RD$)</label>
+          <input id="ep-mora" type="number" class="form-input" value="${c.mora||0}" min="0" step="0.01"></div>
+        <div><label class="form-label">Multa (RD$)</label>
+          <input id="ep-multa" type="number" class="form-input" value="${c.multa||0}" min="0" step="0.01"></div>
+      </div>
+      <div><label class="form-label">Estado</label>
+        <select id="ep-estado" class="form-input">
+          <option value="PENDIENTE" ${est==='PENDIENTE'?'selected':''}>PENDIENTE</option>
+          <option value="PAGADO" ${est==='PAGADO'?'selected':''}>PAGADO</option>
+          <option value="VENCIDA" ${est==='VENCIDA'?'selected':''}>VENCIDA</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="editarPagoGuardar('${idPrestamo}',${numCuota})">Guardar cambios</button>`);
+}
+function editarPagoGuardar(idPrestamo, numCuota){
+  if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);
+  if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);
+  if(!c)return;
+  const abono=parseFloat(document.getElementById('ep-abono').value)||0;
+  const fecha=document.getElementById('ep-fecha').value||null;
+  const mora=parseFloat(document.getElementById('ep-mora').value)||0;
+  const multa=parseFloat(document.getElementById('ep-multa').value)||0;
+  const estadoSel=document.getElementById('ep-estado').value;
+  if(estadoSel==='PENDIENTE'){
+    c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+  } else {
+    c.abono=abono;c.fechaPago=fecha;c.mora=mora;c.multa=multa;
+    c._estadoForzado=(estadoSel==='VENCIDA')?'VENCIDA':null;
+  }
+  sDB('prestamos');
+  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
+  closeModal();toast('Pago actualizado','success');
+  prDetalle(idPrestamo);
+}
+// -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
+function limpiarPago(idPrestamo, numCuota){
+  if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
+  openModal('Revertir pago - Cuota #'+numCuota,`
+    <div class="alert alert-danger">Esta accion devuelve la cuota <strong>#${numCuota}</strong> a estado <strong>PENDIENTE</strong>, borrando abono, fecha de pago, mora y multa.</div>
+    <p style="font-size:13px">Confirmar reversion?</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="limpiarPagoConfirm('${idPrestamo}',${numCuota})">Revertir</button>`);
+}
+function limpiarPagoConfirm(idPrestamo, numCuota){
+  if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);
+  if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);
+  if(!c)return;
+  c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+  DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
+  sDB('prestamos');sDB('pagos');
+  addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
+  closeModal();toast('Cuota revertida a PENDIENTE','success');
+  prDetalle(idPrestamo);
+}
+
 
 function prEliminar(id){
   const p=DB.prestamos.find(x=>x.id===id);
