@@ -459,6 +459,8 @@ function getRolColor(role){ return ROLES_DEF[role]?.color || 'badge-gray'; }
 function isSoloLectura(){ return currentUser && ROLES_DEF[currentUser.role]?.soloLectura===true; }
 function isDueno(){ return currentUser && (currentUser.role==='admin'||currentUser.role==='dueno'); }
 function isAdmin(){ return currentUser && currentUser.role==='admin'; }
+function canEdit(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosEditar)&&currentUser.permisosEditar.includes(mod); }
+function canDelete(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosBorrar)&&currentUser.permisosBorrar.includes(mod); }
 
 let DB = {
   config:      ls('config')       || {...defaultConfig},
@@ -1765,9 +1767,9 @@ function verPrestamo(id){
         const bc={PAGADO:'badge-green',VENCIDA:'badge-red',PENDIENTE:'badge-amber',PARCIAL:'badge-purple'};
         const _canEd=isAdmin()||canEdit('prestamos');
         const _canDel=isAdmin()||canDelete('prestamos');
-        const _btnEd=_canEd?`<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago('${id}',${c.num})" title="Editar pago">&#x270F;</button>`:'';
-        const _btnDel=(_canDel&&est==='PAGADO')?`<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago('${id}',${c.num})" title="Revertir">&#x2717;</button>`:'';
-        const _btnAcc=(_canEd||_canDel)?`<td style="white-space:nowrap;text-align:center">${_btnEd}${_btnDel}</td>`:'';
+        const _btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar pago">&#x270F;</button>'):'';
+        const _btnDel=(_canDel&&est==='PAGADO')?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
+        const _btnAcc=(_canEd||_canDel)?('<td style="white-space:nowrap;text-align:center">'+_btnEd+_btnDel+'</td>'):'';
         return`<tr>
           <td style="text-align:center">${c.num}</td>
           <td>${fmtDate(c.fechaCuota)}</td>
@@ -1840,7 +1842,7 @@ function editarPagoGuardar(idPrestamo, numCuota){
   sDB('prestamos');
   addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
   closeModal();toast('Pago actualizado','success');
-  prDetalle(idPrestamo);
+  verPrestamo(idPrestamo);
 }
 // -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
 function limpiarPago(idPrestamo, numCuota){
@@ -1862,7 +1864,7 @@ function limpiarPagoConfirm(idPrestamo, numCuota){
   sDB('prestamos');sDB('pagos');
   addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
   closeModal();toast('Cuota revertida a PENDIENTE','success');
-  prDetalle(idPrestamo);
+  verPrestamo(idPrestamo);
 }
 
 
