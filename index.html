@@ -910,11 +910,12 @@ const ROUTERS={
   log:renderBitacora,
 };
 
+let currentPage='dashboard';
 function showPage(id){
   if(id!=='perfil'&&!can(id)){return;}
   const mod=MODULOS.find(m=>m.id===id);
   if(mod&&mod.adminOnly&&!isAdmin()){toast('Acceso restringido — solo Administrador','error');return;}
-  // Cerrar sidebar en móvil al navegar
+  currentPage=id;
   const sb=document.getElementById('sidebar');
   const ov=document.getElementById('sidebar-overlay');
   if(sb&&window.innerWidth<=768){sb.classList.remove('open');if(ov)ov.classList.remove('open');}
@@ -2140,6 +2141,7 @@ function pgMostrarCuotas(){
   const interesPendiente=p.totalInteres-interesPagado;
   const capitalPagado=cuotasPagadas.reduce((a,cu)=>a+cu.capital,0);
   const capitalPendiente=p.capital-capitalPagado;
+  const totalMultasCobradas=p.cuotas.reduce((a,cu)=>a+(cu.multa||0),0);
   document.getElementById('pg-info').innerHTML=`
     <div style="background:var(--gray2);padding:14px;border-radius:var(--radius-sm);font-size:13px;margin-top:10px">
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
@@ -2157,7 +2159,11 @@ function pgMostrarCuotas(){
         <div style="padding:8px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:var(--green)">Interés pagado</div><div style="font-weight:700;color:var(--green)">${fmtP(interesPagado)}</div></div>
         <div style="padding:8px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:var(--amber)">Interés pendiente</div><div style="font-weight:700;color:var(--amber)">${fmtP(interesPendiente)}</div></div>
       </div>
-      ${(()=>{const tm=p.cuotas.reduce((a,c)=>a+(c.multa||0),0);return tm>0?`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);margin-bottom:8px"><span style="font-size:13px">💰</span><span style="font-size:12px;font-weight:600;color:#9a3412">Multas cobradas: <strong>${fmtP(tm)}</strong></span></div>`:''})()}
+      ${totalMultasCobradas>0?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+        <div style="padding:8px;background:var(--white);border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:var(--gray)">Total multas</div><div style="font-weight:700;color:#ea580c">${fmtP(totalMultasCobradas)}</div></div>
+        <div style="padding:8px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#166534;font-weight:600">&#x2714; Multas cobradas</div><div style="font-weight:700;color:#16a34a">${fmtP(totalMultasCobradas)}</div></div>
+        <div style="padding:8px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#9a3412;font-weight:600">Ganancia extra</div><div style="font-weight:700;color:#ea580c">+${fmtP(totalMultasCobradas)}</div></div>
+      </div>`:''}
       <div style="margin-bottom:4px;font-size:11px;color:var(--gray)">Progreso de pago: ${pct}% — Total pagado: ${fmtP(totalAbonado)} de ${fmtP(p.totalPagar)}</div>
       <div class="progress-bar" style="height:10px"><div class="progress-fill" style="width:${pct}%;background:var(--green)"></div></div>
       ${cuotasVenc?`<div style="color:var(--red);font-weight:600;margin-top:8px">⚠️ ${cuotasVenc} cuota${cuotasVenc>1?'s':''} vencida${cuotasVenc>1?'s':''}</div>`:''}
@@ -2179,7 +2185,7 @@ function pgMostrarCuotas(){
           <td style="font-weight:700">${fmt(cu.amortizacion)}</td>
           <td style="color:var(--green);font-weight:600">${cu.abono?fmt(cu.abono):'—'}</td>
           <td style="color:${dias>0&&est!=='PAGADO'?'var(--red)':'var(--gray)'}">${dias>0&&est!=='PAGADO'?dias+' días':'—'}</td>
-          <td style="color:var(--red)">${cu.multa?('<span style="color:var(--red);font-weight:600">'+fmt(cu.multa)+(cu.multaCobrada?'<span title=\"Multa cobrada\" style=\"color:var(--green);margin-left:3px\">✔</span>':'')+'</span>'):(multa>0?fmt(multa):'—')}</td>
+          <td style="color:var(--red)">${cu.multa>0?('<span style="font-weight:600;color:var(--green)">'+fmt(cu.multa)+' &#x2714;</span>'):multa>0?('<span style="color:var(--red)">'+fmt(multa)+'</span>'):'—'}</td>
           <td style="font-size:11px;color:var(--gray)">${fmtDate(cu.fechaPago)}</td>
           <td><span class="badge ${bc[est]||'badge-gray'}">${est}</span></td>
           <td>${est!=='PAGADO'?`<button class="btn btn-green btn-sm" onclick="pgRegistrarPago('${id}',${cu.num})">💳 Pagar</button>`:'<span style="color:var(--green);font-size:18px">✅</span>'}</td>
