@@ -1752,14 +1752,26 @@ function verPrestamo(id){
   if(!p)return;
   const cuotasPag=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').length;
   const cuotasVenc=p.cuotas.filter(c=>calcEstadoCuota(c)==='VENCIDA').length;
-  const cuotasPend=p.cuotas.filter(c=>calcEstadoCuota(c)==='PENDIENTE').length;
+  const cuotasPend=p.cuotas.filter(c=>{ const e=calcEstadoCuota(c); return e==='PENDIENTE'||e==='PARCIAL'; }).length;
+  const totalAbonado=p.cuotas.reduce((a,c)=>a+(c.abono||0),0);
+  const totalMultas=p.cuotas.reduce((a,c)=>a+(c.multa||0),0);
   openModal(`Préstamo ${p.id} — ${p.nombreCliente}`,`
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
       <div style="padding:10px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--green)">${cuotasPag}</div><div style="font-size:11px">Pagadas</div></div>
       <div style="padding:10px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--amber)">${cuotasPend}</div><div style="font-size:11px">Pendientes</div></div>
       <div style="padding:10px;background:var(--red2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--red)">${cuotasVenc}</div><div style="font-size:11px">Vencidas</div></div>
     </div>
-    <div style="max-height:360px;overflow-y:auto">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);text-align:center">
+        <div style="font-size:10px;color:#166534;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Total cobrado</div>
+        <div style="font-weight:800;color:#16a34a;font-size:15px">${fmt(totalAbonado)}</div>
+      </div>
+      <div style="padding:10px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center">
+        <div style="font-size:10px;color:#9a3412;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Multas cobradas</div>
+        <div style="font-weight:800;color:#ea580c;font-size:15px">${totalMultas>0?fmt(totalMultas):'—'}</div>
+      </div>
+    </div>
+    <div style="max-height:300px;overflow-y:auto">
     <table class="amort-table">
       <thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th>${(isAdmin()||canEdit('prestamos')||canDelete('prestamos'))?"<th></th>":""}</tr></thead>
       <tbody>${p.cuotas.map(c=>{
@@ -1768,13 +1780,13 @@ function verPrestamo(id){
         const _canEd=isAdmin()||canEdit('prestamos');
         const _canDel=isAdmin()||canDelete('prestamos');
         const _btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar pago">&#x270F;</button>'):'';
-        const _btnDel=(_canDel&&est==='PAGADO')?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
+        const _btnDel=(_canDel&&(est==='PAGADO'||est==='PARCIAL'))?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
         const _btnAcc=(_canEd||_canDel)?('<td style="white-space:nowrap;text-align:center">'+_btnEd+_btnDel+'</td>'):'';
         return`<tr>
           <td style="text-align:center">${c.num}</td>
           <td>${fmtDate(c.fechaCuota)}</td>
           <td style="font-weight:700">${fmt(c.amortizacion)}</td>
-          <td style="color:var(--green)">${c.abono?fmt(c.abono):'—'}</td>
+          <td style="color:var(--green);font-weight:600">${c.abono?fmt(c.abono):'—'}</td>
           <td style="color:var(--red)">${c.multa?fmt(c.multa):'—'}</td>
           <td>${fmtDate(c.fechaPago)}</td>
           <td><span class="badge ${bc[est]}">${est}</span></td>
@@ -1785,7 +1797,7 @@ function verPrestamo(id){
     `<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
      <button class="btn btn-primary" onclick="closeModal();imprimirFactura('${id}')">🖨️ Factura</button>
      <button class="btn btn-amber" onclick="closeModal();imprimirPagare('${id}')">📄 Pagaré</button>
-     ${p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?`<button class="btn btn-red" onclick="cancelarPrestamo('${id}')">❌ Cancelar</button>`:''}` );
+     ${p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?`<button class="btn btn-red" onclick="cancelarPrestamo('${id}')">❌ Cancelar</button>`:''}\` );
 }
 
 // -- EDITAR PAGO (admin o permiso editar prestamos) --
@@ -2173,6 +2185,23 @@ function pgRegistrarPago(idPrestamo,numCuota){
       ${situacionHtml}
       ${abonoAnterior>0?'<div style="margin-top:6px;font-size:12px;color:var(--green)">✔ Ya abonado: '+fmtP(abonoAnterior)+'</div>':''}
     </div>
+    <div class="form-field" style="margin-bottom:10px">
+      <label class="required">¿Qué va a pagar?</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:6px">
+        <button type="button" id="tipo-ambos" onclick="pgSetTipoPago('ambos',${cu.capital},${interesProp},${abonoAnterior})"
+          style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:var(--blue);color:white;cursor:pointer;font-size:12px;font-weight:700">
+          Capital + Interés<br><span style="font-size:11px;opacity:.85">${fmtP(cu.capital+interesProp)}</span>
+        </button>
+        <button type="button" id="tipo-interes" onclick="pgSetTipoPago('interes',${cu.capital},${interesProp},${abonoAnterior})"
+          style="padding:10px;border:2px solid var(--amber);border-radius:var(--radius-sm);background:white;color:var(--amber);cursor:pointer;font-size:12px;font-weight:700">
+          Solo Interés<br><span style="font-size:11px">${fmtP(interesProp)}</span>
+        </button>
+        <button type="button" id="tipo-capital" onclick="pgSetTipoPago('capital',${cu.capital},${interesProp},${abonoAnterior})"
+          style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:white;color:var(--blue);cursor:pointer;font-size:12px;font-weight:700">
+          Solo Capital<br><span style="font-size:11px">${fmtP(cu.capital)}</span>
+        </button>
+      </div>
+    </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a pagar (${monedaP})</label>
         <input type="number" id="pago-monto" value="${montoPorDefecto}" step="0.01" min="0">
@@ -2215,6 +2244,27 @@ function pgImprimirReciboPreview(idPrestamo,numCuota){
     monto,multa,fecha,metodo,cobrador,notas,
     moneda:p.moneda||'RD$'};
   imprimirReciboConDatos(pgTemp,p,cu,'Vista previa — Recibo de pago');
+}
+
+function pgSetTipoPago(tipo, capital, interes, abonoAnterior){
+  const btnAmbos=document.getElementById('tipo-ambos');
+  const btnInt=document.getElementById('tipo-interes');
+  const btnCap=document.getElementById('tipo-capital');
+  const input=document.getElementById('pago-monto');
+  // Reset styles
+  [btnAmbos,btnInt,btnCap].forEach(b=>{if(b){b.style.background='white';b.style.color=b===btnAmbos?'var(--blue)':b===btnInt?'var(--amber)':'var(--blue)';}});
+  let monto=0;
+  if(tipo==='ambos'){
+    monto=Math.max(0, capital+interes-abonoAnterior);
+    if(btnAmbos){btnAmbos.style.background='var(--blue)';btnAmbos.style.color='white';}
+  } else if(tipo==='interes'){
+    monto=Math.max(0, interes-Math.min(abonoAnterior,interes));
+    if(btnInt){btnInt.style.background='var(--amber)';btnInt.style.color='white';}
+  } else if(tipo==='capital'){
+    monto=Math.max(0, capital-Math.max(0,abonoAnterior-interes));
+    if(btnCap){btnCap.style.background='var(--blue)';btnCap.style.color='white';}
+  }
+  if(input) input.value=parseFloat(monto.toFixed(2));
 }
 
 function pgConfirmarPago(idPrestamo,numCuota,interesProporcional){
@@ -4378,7 +4428,6 @@ async function fbCargar(){
       if(snap.exists){
         const val = JSON.parse(snap.data().valor);
         if(val!==null){
-          // Para usuarios: fusionar Firebase con local, nunca perder usuarios
           if(key==='users' && Array.isArray(val) && Array.isArray(DB[key])){
             const merged = [...val];
             DB[key].forEach(localUser => {
@@ -4393,9 +4442,24 @@ async function fbCargar(){
       }
     } catch(e){ console.warn('FB load error:', e.message); }
   }
-  // Guardar usuarios fusionados en localStorage
   try{ ss('users', DB['users']); } catch(e){}
   return loaded;
+}
+
+function fbEscucharCambios(){
+  const keys=['prestamos','pagos','clientes','abonos','gastos','nomina_emp','nomina_pagos'];
+  keys.forEach(key=>{
+    _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
+      if(!snap.exists)return;
+      try{
+        const val=JSON.parse(snap.data().valor);
+        if(val!==null){ DB[key]=val; try{ss(key,val);}catch(e){} }
+        // Refrescar UI si hay página activa
+        if(typeof renderPage==='function') try{renderPage();}catch(e){}
+        else if(typeof showPage==='function') try{showPage(currentPage);}catch(e){}
+      }catch(e){}
+    });
+  });
 }
 
 const _sDB_orig = sDB;
@@ -4443,6 +4507,7 @@ window.fbIniciar = async function(){
       const keys=['config','users','clientes','prestamos','pagos','abonos','gastos','nomina_emp','nomina_pagos','log'];
       for(const k of keys) await fbGuardar(k);
       setStatus('#22c55e','✓ Firebase');
+    fbEscucharCambios();
     }
   } catch(e) {
     setStatus('#ef4444','Sin conexión');
