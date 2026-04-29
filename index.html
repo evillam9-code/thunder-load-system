@@ -2190,11 +2190,11 @@ function pgRegistrarPago(idPrestamo,numCuota){
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:6px">
         <button type="button" id="tipo-ambos" onclick="pgSetTipoPago('ambos',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:var(--blue);color:white;cursor:pointer;font-size:12px;font-weight:700">
-          Capital + Interés<br><span style="font-size:11px;opacity:.85">${fmtP(cu.capital+interesProp)}</span>
+          Capital + Inter&eacute;s<br><span style="font-size:11px;opacity:.85">${fmtP(cu.capital+interesProp)}</span>
         </button>
         <button type="button" id="tipo-interes" onclick="pgSetTipoPago('interes',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--amber);border-radius:var(--radius-sm);background:white;color:var(--amber);cursor:pointer;font-size:12px;font-weight:700">
-          Solo Interés<br><span style="font-size:11px">${fmtP(interesProp)}</span>
+          Solo Inter&eacute;s<br><span style="font-size:11px">${fmtP(interesProp)}</span>
         </button>
         <button type="button" id="tipo-capital" onclick="pgSetTipoPago('capital',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:white;color:var(--blue);cursor:pointer;font-size:12px;font-weight:700">
