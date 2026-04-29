@@ -461,6 +461,8 @@ function isDueno(){ return currentUser && (currentUser.role==='admin'||currentUs
 function isAdmin(){ return currentUser && currentUser.role==='admin'; }
 function canEdit(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosEditar)&&currentUser.permisosEditar.includes(mod); }
 function canDelete(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosBorrar)&&currentUser.permisosBorrar.includes(mod); }
+function canEdit(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosEditar)&&currentUser.permisosEditar.includes(mod); }
+function canDelete(mod){ if(!currentUser)return false; if(isAdmin()||isDueno())return true; return Array.isArray(currentUser.permisosBorrar)&&currentUser.permisosBorrar.includes(mod); }
 
 let DB = {
   config:      ls('config')       || {...defaultConfig},
@@ -1752,55 +1754,47 @@ function verPrestamo(id){
   if(!p)return;
   const cuotasPag=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').length;
   const cuotasVenc=p.cuotas.filter(c=>calcEstadoCuota(c)==='VENCIDA').length;
-  const cuotasPend=p.cuotas.filter(c=>{ const e=calcEstadoCuota(c); return e==='PENDIENTE'||e==='PARCIAL'; }).length;
+  const cuotasPend=p.cuotas.filter(c=>{const e=calcEstadoCuota(c);return e==='PENDIENTE'||e==='PARCIAL';}).length;
   const totalAbonado=p.cuotas.reduce((a,c)=>a+(c.abono||0),0);
   const totalMultas=p.cuotas.reduce((a,c)=>a+(c.multa||0),0);
-  openModal(`Préstamo ${p.id} — ${p.nombreCliente}`,`
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
-      <div style="padding:10px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--green)">${cuotasPag}</div><div style="font-size:11px">Pagadas</div></div>
-      <div style="padding:10px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--amber)">${cuotasPend}</div><div style="font-size:11px">Pendientes</div></div>
-      <div style="padding:10px;background:var(--red2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--red)">${cuotasVenc}</div><div style="font-size:11px">Vencidas</div></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-      <div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);text-align:center">
-        <div style="font-size:10px;color:#166534;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Total cobrado</div>
-        <div style="font-weight:800;color:#16a34a;font-size:15px">${fmt(totalAbonado)}</div>
-      </div>
-      <div style="padding:10px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center">
-        <div style="font-size:10px;color:#9a3412;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Multas cobradas</div>
-        <div style="font-weight:800;color:#ea580c;font-size:15px">${totalMultas>0?fmt(totalMultas):'—'}</div>
-      </div>
-    </div>
-    <div style="max-height:300px;overflow-y:auto">
-    <table class="amort-table">
-      <thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th>${(isAdmin()||canEdit('prestamos')||canDelete('prestamos'))?"<th></th>":""}</tr></thead>
-      <tbody>${p.cuotas.map(c=>{
-        const est=calcEstadoCuota(c);
-        const bc={PAGADO:'badge-green',VENCIDA:'badge-red',PENDIENTE:'badge-amber',PARCIAL:'badge-purple'};
-        const _canEd=isAdmin()||canEdit('prestamos');
-        const _canDel=isAdmin()||canDelete('prestamos');
-        const _btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar pago">&#x270F;</button>'):'';
-        const _btnDel=(_canDel&&(est==='PAGADO'||est==='PARCIAL'))?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
-        const _btnAcc=(_canEd||_canDel)?('<td style="white-space:nowrap;text-align:center">'+_btnEd+_btnDel+'</td>'):'';
-        return`<tr>
-          <td style="text-align:center">${c.num}</td>
-          <td>${fmtDate(c.fechaCuota)}</td>
-          <td style="font-weight:700">${fmt(c.amortizacion)}</td>
-          <td style="color:var(--green);font-weight:600">${c.abono?fmt(c.abono):'—'}</td>
-          <td style="color:var(--red)">${c.multa?fmt(c.multa):'—'}</td>
-          <td>${fmtDate(c.fechaPago)}</td>
-          <td><span class="badge ${bc[est]}">${est}</span></td>
-          ${_btnAcc}
-        </tr>`;}).join('')}
-      </tbody>
-    </table></div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
-     <button class="btn btn-primary" onclick="closeModal();imprimirFactura('${id}')">🖨️ Factura</button>
-     <button class="btn btn-amber" onclick="closeModal();imprimirPagare('${id}')">📄 Pagaré</button>
-     ${p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?`<button class="btn btn-red" onclick="cancelarPrestamo('${id}')">❌ Cancelar</button>`:''}\` );
+  const _canEd=isAdmin()||canEdit('prestamos');
+  const _canDel=isAdmin()||canDelete('prestamos');
+  const filasHTML=p.cuotas.map(c=>{
+    const est=calcEstadoCuota(c);
+    const bc={PAGADO:'badge-green',VENCIDA:'badge-red',PENDIENTE:'badge-amber',PARCIAL:'badge-purple'};
+    const btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar">&#x270F;</button>'):'';
+    const btnDel=(_canDel&&(est==='PAGADO'||est==='PARCIAL'))?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
+    const btnTd=(_canEd||_canDel)?('<td style="white-space:nowrap;text-align:center">'+btnEd+btnDel+'</td>'):'';
+    return '<tr>'
+      +'<td style="text-align:center">'+c.num+'</td>'
+      +'<td>'+fmtDate(c.fechaCuota)+'</td>'
+      +'<td style="font-weight:700">'+fmt(c.amortizacion)+'</td>'
+      +'<td style="color:var(--green);font-weight:600">'+(c.abono?fmt(c.abono):'—')+'</td>'
+      +'<td style="color:var(--red)">'+(c.multa?fmt(c.multa):'—')+'</td>'
+      +'<td>'+fmtDate(c.fechaPago)+'</td>'
+      +'<td><span class="badge '+bc[est]+'">'+est+'</span></td>'
+      +btnTd+'</tr>';
+  }).join('');
+  const thAcc=(_canEd||_canDel)?'<th></th>':'';
+  const modalBody='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">'
+    +'<div style="padding:10px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--green)">'+cuotasPag+'</div><div style="font-size:11px">Pagadas</div></div>'
+    +'<div style="padding:10px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--amber)">'+cuotasPend+'</div><div style="font-size:11px">Pendientes</div></div>'
+    +'<div style="padding:10px;background:var(--red2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--red)">'+cuotasVenc+'</div><div style="font-size:11px">Vencidas</div></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
+    +'<div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#166534;font-weight:600;text-transform:uppercase">Total cobrado</div><div style="font-weight:800;color:#16a34a;font-size:15px">'+fmt(totalAbonado)+'</div></div>'
+    +'<div style="padding:10px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#9a3412;font-weight:600;text-transform:uppercase">Multas cobradas</div><div style="font-weight:800;color:#ea580c;font-size:15px">'+(totalMultas>0?fmt(totalMultas):'—')+'</div></div>'
+    +'</div>'
+    +'<div style="max-height:300px;overflow-y:auto"><table class="amort-table">'
+    +'<thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th>'+thAcc+'</tr></thead>'
+    +'<tbody>'+filasHTML+'</tbody></table></div>';
+  const modalFoot='<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>'
+    +' <button class="btn btn-primary" onclick="closeModal();imprimirFactura(\''+id+'\')">Factura</button>'
+    +' <button class="btn btn-amber" onclick="closeModal();imprimirPagare(\''+id+'\')">Pagare</button>'
+    +(p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?(' <button class="btn btn-red" onclick="cancelarPrestamo(\''+id+'\')">Cancelar</button>'):'');
+  openModal('Prestamo '+p.id+' - '+p.nombreCliente,modalBody,modalFoot);
 }
 
-// -- EDITAR PAGO (admin o permiso editar prestamos) --
 function editarPago(idPrestamo, numCuota){
   if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
   const p=DB.prestamos.find(x=>x.id===idPrestamo);
@@ -1808,27 +1802,31 @@ function editarPago(idPrestamo, numCuota){
   const c=p.cuotas.find(x=>x.num===numCuota);
   if(!c)return;
   const est=calcEstadoCuota(c);
-  const _selEst='<option value="PENDIENTE"'+(est==='PENDIENTE'?' selected':'')+'>PENDIENTE</option>'
-    +'<option value="PAGADO"'+(est==='PAGADO'?' selected':'')+'>PAGADO</option>'
-    +'<option value="VENCIDA"'+(est==='VENCIDA'?' selected':'')+'>VENCIDA</option>';
-  openModal('Editar pago - Cuota #'+numCuota,
-    '<div style="display:grid;gap:12px">'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-    +'<div><label class="form-label">Monto abonado</label>'
-    +'<input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
-    +'<div><label class="form-label">Fecha de pago</label>'
-    +'<input id="ep-fecha" type="date" class="form-input" value="'+(c.fechaPago||'')+'"></div></div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-    +'<div><label class="form-label">Mora (RD$)</label>'
-    +'<input id="ep-mora" type="number" class="form-input" value="'+(c.mora||0)+'" min="0" step="0.01"></div>'
-    +'<div><label class="form-label">Multa (RD$)</label>'
-    +'<input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div></div>'
-    +'<div><label class="form-label">Estado</label>'
-    +'<select id="ep-estado" class="form-input">'+_selEst+'</select></div>'
-    +'<div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>'
-    +'</div>',
-    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
-    +' <button class="btn btn-primary" onclick="editarPagoGuardar(''+idPrestamo+'','+numCuota+')">Guardar cambios</button>');
+  openModal('Editar pago - Cuota #'+numCuota,`
+    <div style="display:grid;gap:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="form-label">Monto abonado</label>
+          <input id="ep-abono" type="number" class="form-input" value="${c.abono||0}" min="0" step="0.01"></div>
+        <div><label class="form-label">Fecha de pago</label>
+          <input id="ep-fecha" type="date" class="form-input" value="${c.fechaPago||''}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="form-label">Mora (RD$)</label>
+          <input id="ep-mora" type="number" class="form-input" value="${c.mora||0}" min="0" step="0.01"></div>
+        <div><label class="form-label">Multa (RD$)</label>
+          <input id="ep-multa" type="number" class="form-input" value="${c.multa||0}" min="0" step="0.01"></div>
+      </div>
+      <div><label class="form-label">Estado</label>
+        <select id="ep-estado" class="form-input">
+          <option value="PENDIENTE" ${est==='PENDIENTE'?'selected':''}>PENDIENTE</option>
+          <option value="PAGADO" ${est==='PAGADO'?'selected':''}>PAGADO</option>
+          <option value="VENCIDA" ${est==='VENCIDA'?'selected':''}>VENCIDA</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="editarPagoGuardar('${idPrestamo}',${numCuota})">Guardar cambios</button>`);
 }
 function editarPagoGuardar(idPrestamo, numCuota){
   if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
@@ -1855,11 +1853,11 @@ function editarPagoGuardar(idPrestamo, numCuota){
 // -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
 function limpiarPago(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
-  openModal('Revertir pago - Cuota #'+numCuota,
-    '<div class="alert alert-danger">Esta accion devuelve la cuota <strong>#'+numCuota+'</strong> a estado <strong>PENDIENTE</strong>, borrando abono, fecha de pago, mora y multa.</div>'
-    +'<p style="font-size:13px">Confirmar reversion?</p>',
-    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
-    +' <button class="btn btn-red" onclick="limpiarPagoConfirm(''+idPrestamo+'','+numCuota+')">Revertir</button>');
+  openModal('Revertir pago - Cuota #'+numCuota,`
+    <div class="alert alert-danger">Esta accion devuelve la cuota <strong>#${numCuota}</strong> a estado <strong>PENDIENTE</strong>, borrando abono, fecha de pago, mora y multa.</div>
+    <p style="font-size:13px">Confirmar reversion?</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="limpiarPagoConfirm('${idPrestamo}',${numCuota})">Revertir</button>`);
 }
 function limpiarPagoConfirm(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
@@ -1876,13 +1874,77 @@ function limpiarPagoConfirm(idPrestamo, numCuota){
 }
 
 
+function editarPago(idPrestamo,numCuota){
+  if(!isAdmin()&&!canEdit('prestamos')){toast('Sin permiso para editar pagos','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
+  const est=calcEstadoCuota(c);
+  const selOpts='<option value="PENDIENTE"'+(est==='PENDIENTE'?' selected':'')+'>PENDIENTE</option>'
+    +'<option value="PAGADO"'+(est==='PAGADO'?' selected':'')+'>PAGADO</option>'
+    +'<option value="VENCIDA"'+(est==='VENCIDA'?' selected':'')+'>VENCIDA</option>';
+  const body='<div style="display:grid;gap:12px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    +'<div><label class="form-label">Monto abonado</label><input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
+    +'<div><label class="form-label">Fecha de pago</label><input id="ep-fecha" type="date" class="form-input" value="'+(c.fechaPago||'')+'"></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    +'<div><label class="form-label">Mora (RD$)</label><input id="ep-mora" type="number" class="form-input" value="'+(c.mora||0)+'" min="0" step="0.01"></div>'
+    +'<div><label class="form-label">Multa (RD$)</label><input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div>'
+    +'</div>'
+    +'<div><label class="form-label">Estado</label><select id="ep-estado" class="form-input">'+selOpts+'</select></div>'
+    +'<div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>'
+    +'</div>';
+  const _epId=String(idPrestamo);const _epNum=parseInt(numCuota);
+  const foot='<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
+    +' <button class="btn btn-primary" onclick="editarPagoGuardar(&quot;'+_epId+'&quot;,'+_epNum+')">Guardar cambios</button>';
+  openModal('Editar pago - Cuota #'+numCuota,body,foot);
+}
+function editarPagoGuardar(idPrestamo,numCuota){
+  if(!isAdmin()&&!canEdit('prestamos')){toast('Sin permiso','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
+  const estadoSel=document.getElementById('ep-estado').value;
+  if(estadoSel==='PENDIENTE'){
+    c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+  } else {
+    c.abono=parseFloat(document.getElementById('ep-abono').value)||0;
+    c.fechaPago=document.getElementById('ep-fecha').value||null;
+    c.mora=parseFloat(document.getElementById('ep-mora').value)||0;
+    c.multa=parseFloat(document.getElementById('ep-multa').value)||0;
+    c._estadoForzado=(estadoSel==='VENCIDA')?'VENCIDA':null;
+  }
+  sDB('prestamos');
+  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
+  closeModal();toast('Pago actualizado','success');
+  verPrestamo(idPrestamo);
+}
+function limpiarPago(idPrestamo,numCuota){
+  if(!isAdmin()&&!canDelete('prestamos')){toast('Sin permiso para revertir pagos','error');return;}
+  const body='<div class="alert alert-danger">Devolver cuota #'+numCuota+' a PENDIENTE, borrando abono, fecha, mora y multa.</div><p style="font-size:13px">Confirmar?</p>';
+  const _lpId=String(idPrestamo);const _lpNum=parseInt(numCuota);
+  const foot='<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
+    +' <button class="btn btn-red" onclick="limpiarPagoConfirm(&quot;'+_lpId+'&quot;,'+_lpNum+')">Revertir</button>';
+  openModal('Revertir pago - Cuota #'+numCuota,body,foot);
+}
+function limpiarPagoConfirm(idPrestamo,numCuota){
+  if(!isAdmin()&&!canDelete('prestamos')){toast('Sin permiso','error');return;}
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
+  const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
+  c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+  DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
+  sDB('prestamos');sDB('pagos');
+  addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
+  closeModal();toast('Cuota revertida a PENDIENTE','success');
+  verPrestamo(idPrestamo);
+}
+
 function prEliminar(id){
   const p=DB.prestamos.find(x=>x.id===id);
-  openModal('Eliminar prestamo',
-    '<div class="alert alert-danger">Esta accion eliminara permanentemente el prestamo <strong>'+escHtml(id)+'</strong> de <strong>'+escHtml(p.nombreCliente)+'</strong> y todos sus registros de pago.</div>'
-    +'<p style="font-size:13px">Esta seguro de continuar?</p>',
-    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
-    +' <button class="btn btn-red" onclick="prEliminarConfirm(''+id+'')">Eliminar permanentemente</button>');
+  openModal('🗑 Eliminar préstamo',`
+    <div class="alert alert-danger">⚠️ Esta acción eliminará permanentemente el préstamo <strong>${escHtml(id)}</strong> de <strong>${escHtml(p.nombreCliente)}</strong> y todos sus registros de pago.</div>
+    <p style="font-size:13px">¿Está seguro de continuar?</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="prEliminarConfirm('${id}')">🗑 Eliminar permanentemente</button>`);
 }
 function prEliminarConfirm(id){
   DB.prestamos=DB.prestamos.filter(x=>x.id!==id);
@@ -1892,8 +1954,8 @@ function prEliminarConfirm(id){
 }
 function cancelarPrestamo(id){
   const p=DB.prestamos.find(x=>x.id===id);
-  openModal('Cancelar prestamo','<p>Cancelar el prestamo <strong>'+id+'</strong> de <strong>'+escHtml(p.nombreCliente)+'</strong>?</p><p style="margin-top:8px;color:var(--gray);font-size:12px">Esto marca el prestamo como cancelado y no se puede revertir.</p>',
-    '<button class="btn btn-secondary" onclick="closeModal()">Atras</button>
+  openModal('Cancelar préstamo',`<p>¿Cancelar el préstamo <strong>${id}</strong> de <strong>${escHtml(p.nombreCliente)}</strong>?</p><p style="margin-top:8px;color:var(--gray);font-size:12px">Esto marca el préstamo como cancelado y no se puede revertir.</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Atrás</button>
      <button class="btn btn-red" onclick="cancelarPrestamoConfirm('${id}')">Confirmar cancelación</button>`);
 }
 
@@ -2182,15 +2244,15 @@ function pgRegistrarPago(idPrestamo,numCuota){
       ${abonoAnterior>0?'<div style="margin-top:6px;font-size:12px;color:var(--green)">✔ Ya abonado: '+fmtP(abonoAnterior)+'</div>':''}
     </div>
     <div class="form-field" style="margin-bottom:10px">
-      <label class="required">¿Qué va a pagar?</label>
+      <label class="required">Que va a pagar?</label>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:6px">
         <button type="button" id="tipo-ambos" onclick="pgSetTipoPago('ambos',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:var(--blue);color:white;cursor:pointer;font-size:12px;font-weight:700">
-          Capital + Inter&eacute;s<br><span style="font-size:11px;opacity:.85">${fmtP(cu.capital+interesProp)}</span>
+          Capital + Interes<br><span style="font-size:11px;opacity:.85">${fmtP(cu.capital+interesProp)}</span>
         </button>
         <button type="button" id="tipo-interes" onclick="pgSetTipoPago('interes',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--amber);border-radius:var(--radius-sm);background:white;color:var(--amber);cursor:pointer;font-size:12px;font-weight:700">
-          Solo Inter&eacute;s<br><span style="font-size:11px">${fmtP(interesProp)}</span>
+          Solo Interes<br><span style="font-size:11px">${fmtP(interesProp)}</span>
         </button>
         <button type="button" id="tipo-capital" onclick="pgSetTipoPago('capital',${cu.capital},${interesProp},${abonoAnterior})"
           style="padding:10px;border:2px solid var(--blue);border-radius:var(--radius-sm);background:white;color:var(--blue);cursor:pointer;font-size:12px;font-weight:700">
@@ -2242,27 +2304,20 @@ function pgImprimirReciboPreview(idPrestamo,numCuota){
   imprimirReciboConDatos(pgTemp,p,cu,'Vista previa — Recibo de pago');
 }
 
-function pgSetTipoPago(tipo, capital, interes, abonoAnterior){
-  const btnAmbos=document.getElementById('tipo-ambos');
-  const btnInt=document.getElementById('tipo-interes');
-  const btnCap=document.getElementById('tipo-capital');
-  const input=document.getElementById('pago-monto');
-  // Reset styles
-  [btnAmbos,btnInt,btnCap].forEach(b=>{if(b){b.style.background='white';b.style.color=b===btnAmbos?'var(--blue)':b===btnInt?'var(--amber)':'var(--blue)';}});
+function pgSetTipoPago(tipo,capital,interes,abonoAnterior){
+  const bA=document.getElementById('tipo-ambos');
+  const bI=document.getElementById('tipo-interes');
+  const bC=document.getElementById('tipo-capital');
+  const inp=document.getElementById('pago-monto');
+  if(bA){bA.style.background='white';bA.style.color='var(--blue)';}
+  if(bI){bI.style.background='white';bI.style.color='var(--amber)';}
+  if(bC){bC.style.background='white';bC.style.color='var(--blue)';}
   let monto=0;
-  if(tipo==='ambos'){
-    monto=Math.max(0, capital+interes-abonoAnterior);
-    if(btnAmbos){btnAmbos.style.background='var(--blue)';btnAmbos.style.color='white';}
-  } else if(tipo==='interes'){
-    monto=Math.max(0, interes-Math.min(abonoAnterior,interes));
-    if(btnInt){btnInt.style.background='var(--amber)';btnInt.style.color='white';}
-  } else if(tipo==='capital'){
-    monto=Math.max(0, capital-Math.max(0,abonoAnterior-interes));
-    if(btnCap){btnCap.style.background='var(--blue)';btnCap.style.color='white';}
-  }
-  if(input) input.value=parseFloat(monto.toFixed(2));
+  if(tipo==='ambos'){monto=Math.max(0,parseFloat((capital+interes-abonoAnterior).toFixed(2)));if(bA){bA.style.background='var(--blue)';bA.style.color='white';}}
+  else if(tipo==='interes'){monto=parseFloat(interes.toFixed(2));if(bI){bI.style.background='var(--amber)';bI.style.color='white';}}
+  else if(tipo==='capital'){monto=parseFloat(capital.toFixed(2));if(bC){bC.style.background='var(--blue)';bC.style.color='white';}}
+  if(inp) inp.value=monto;
 }
-
 function pgConfirmarPago(idPrestamo,numCuota,interesProporcional){
   const p=DB.prestamos.find(x=>x.id===idPrestamo);
   const cuota=p.cuotas.find(x=>x.num===numCuota);
@@ -4424,6 +4479,7 @@ async function fbCargar(){
       if(snap.exists){
         const val = JSON.parse(snap.data().valor);
         if(val!==null){
+          // Para usuarios: fusionar Firebase con local, nunca perder usuarios
           if(key==='users' && Array.isArray(val) && Array.isArray(DB[key])){
             const merged = [...val];
             DB[key].forEach(localUser => {
@@ -4438,6 +4494,7 @@ async function fbCargar(){
       }
     } catch(e){ console.warn('FB load error:', e.message); }
   }
+  // Guardar usuarios fusionados en localStorage
   try{ ss('users', DB['users']); } catch(e){}
   return loaded;
 }
@@ -4450,9 +4507,7 @@ function fbEscucharCambios(){
       try{
         const val=JSON.parse(snap.data().valor);
         if(val!==null){ DB[key]=val; try{ss(key,val);}catch(e){} }
-        // Refrescar UI si hay página activa
-        if(typeof renderPage==='function') try{renderPage();}catch(e){}
-        else if(typeof showPage==='function') try{showPage(currentPage);}catch(e){}
+        if(typeof showPage==='function') try{showPage(currentPage);}catch(e){}
       }catch(e){}
     });
   });
