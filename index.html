@@ -1808,31 +1808,27 @@ function editarPago(idPrestamo, numCuota){
   const c=p.cuotas.find(x=>x.num===numCuota);
   if(!c)return;
   const est=calcEstadoCuota(c);
-  openModal('Editar pago - Cuota #'+numCuota,`
-    <div style="display:grid;gap:12px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><label class="form-label">Monto abonado</label>
-          <input id="ep-abono" type="number" class="form-input" value="${c.abono||0}" min="0" step="0.01"></div>
-        <div><label class="form-label">Fecha de pago</label>
-          <input id="ep-fecha" type="date" class="form-input" value="${c.fechaPago||''}"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><label class="form-label">Mora (RD$)</label>
-          <input id="ep-mora" type="number" class="form-input" value="${c.mora||0}" min="0" step="0.01"></div>
-        <div><label class="form-label">Multa (RD$)</label>
-          <input id="ep-multa" type="number" class="form-input" value="${c.multa||0}" min="0" step="0.01"></div>
-      </div>
-      <div><label class="form-label">Estado</label>
-        <select id="ep-estado" class="form-input">
-          <option value="PENDIENTE" ${est==='PENDIENTE'?'selected':''}>PENDIENTE</option>
-          <option value="PAGADO" ${est==='PAGADO'?'selected':''}>PAGADO</option>
-          <option value="VENCIDA" ${est==='VENCIDA'?'selected':''}>VENCIDA</option>
-        </select>
-      </div>
-      <div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>
-    </div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-     <button class="btn btn-primary" onclick="editarPagoGuardar('${idPrestamo}',${numCuota})">Guardar cambios</button>`);
+  const _selEst='<option value="PENDIENTE"'+(est==='PENDIENTE'?' selected':'')+'>PENDIENTE</option>'
+    +'<option value="PAGADO"'+(est==='PAGADO'?' selected':'')+'>PAGADO</option>'
+    +'<option value="VENCIDA"'+(est==='VENCIDA'?' selected':'')+'>VENCIDA</option>';
+  openModal('Editar pago - Cuota #'+numCuota,
+    '<div style="display:grid;gap:12px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    +'<div><label class="form-label">Monto abonado</label>'
+    +'<input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
+    +'<div><label class="form-label">Fecha de pago</label>'
+    +'<input id="ep-fecha" type="date" class="form-input" value="'+(c.fechaPago||'')+'"></div></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    +'<div><label class="form-label">Mora (RD$)</label>'
+    +'<input id="ep-mora" type="number" class="form-input" value="'+(c.mora||0)+'" min="0" step="0.01"></div>'
+    +'<div><label class="form-label">Multa (RD$)</label>'
+    +'<input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div></div>'
+    +'<div><label class="form-label">Estado</label>'
+    +'<select id="ep-estado" class="form-input">'+_selEst+'</select></div>'
+    +'<div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>'
+    +'</div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
+    +' <button class="btn btn-primary" onclick="editarPagoGuardar(''+idPrestamo+'','+numCuota+')">Guardar cambios</button>');
 }
 function editarPagoGuardar(idPrestamo, numCuota){
   if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
@@ -1859,11 +1855,11 @@ function editarPagoGuardar(idPrestamo, numCuota){
 // -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
 function limpiarPago(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
-  openModal('Revertir pago - Cuota #'+numCuota,`
-    <div class="alert alert-danger">Esta accion devuelve la cuota <strong>#${numCuota}</strong> a estado <strong>PENDIENTE</strong>, borrando abono, fecha de pago, mora y multa.</div>
-    <p style="font-size:13px">Confirmar reversion?</p>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-     <button class="btn btn-red" onclick="limpiarPagoConfirm('${idPrestamo}',${numCuota})">Revertir</button>`);
+  openModal('Revertir pago - Cuota #'+numCuota,
+    '<div class="alert alert-danger">Esta accion devuelve la cuota <strong>#'+numCuota+'</strong> a estado <strong>PENDIENTE</strong>, borrando abono, fecha de pago, mora y multa.</div>'
+    +'<p style="font-size:13px">Confirmar reversion?</p>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
+    +' <button class="btn btn-red" onclick="limpiarPagoConfirm(''+idPrestamo+'','+numCuota+')">Revertir</button>');
 }
 function limpiarPagoConfirm(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
@@ -1882,11 +1878,11 @@ function limpiarPagoConfirm(idPrestamo, numCuota){
 
 function prEliminar(id){
   const p=DB.prestamos.find(x=>x.id===id);
-  openModal('🗑 Eliminar préstamo',`
-    <div class="alert alert-danger">⚠️ Esta acción eliminará permanentemente el préstamo <strong>${escHtml(id)}</strong> de <strong>${escHtml(p.nombreCliente)}</strong> y todos sus registros de pago.</div>
-    <p style="font-size:13px">¿Está seguro de continuar?</p>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-     <button class="btn btn-red" onclick="prEliminarConfirm('${id}')">🗑 Eliminar permanentemente</button>`);
+  openModal('Eliminar prestamo',
+    '<div class="alert alert-danger">Esta accion eliminara permanentemente el prestamo <strong>'+escHtml(id)+'</strong> de <strong>'+escHtml(p.nombreCliente)+'</strong> y todos sus registros de pago.</div>'
+    +'<p style="font-size:13px">Esta seguro de continuar?</p>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
+    +' <button class="btn btn-red" onclick="prEliminarConfirm(''+id+'')">Eliminar permanentemente</button>');
 }
 function prEliminarConfirm(id){
   DB.prestamos=DB.prestamos.filter(x=>x.id!==id);
@@ -1896,8 +1892,8 @@ function prEliminarConfirm(id){
 }
 function cancelarPrestamo(id){
   const p=DB.prestamos.find(x=>x.id===id);
-  openModal('Cancelar préstamo',`<p>¿Cancelar el préstamo <strong>${id}</strong> de <strong>${escHtml(p.nombreCliente)}</strong>?</p><p style="margin-top:8px;color:var(--gray);font-size:12px">Esto marca el préstamo como cancelado y no se puede revertir.</p>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Atrás</button>
+  openModal('Cancelar prestamo','<p>Cancelar el prestamo <strong>'+id+'</strong> de <strong>'+escHtml(p.nombreCliente)+'</strong>?</p><p style="margin-top:8px;color:var(--gray);font-size:12px">Esto marca el prestamo como cancelado y no se puede revertir.</p>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Atras</button>
      <button class="btn btn-red" onclick="cancelarPrestamoConfirm('${id}')">Confirmar cancelación</button>`);
 }
 
