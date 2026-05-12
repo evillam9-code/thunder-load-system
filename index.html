@@ -211,12 +211,13 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
   .topbar{padding:0 12px;gap:8px}
   .topbar-brand{font-size:14px}
   .user-name{display:none}
+  #admin-presence{display:none!important}
   .sidebar-toggle{display:flex!important;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.12);border:none;color:#fff;font-size:20px;cursor:pointer;flex-shrink:0;margin-right:4px}
   .sidebar{position:fixed;top:56px;left:0;height:calc(100vh - 56px);z-index:200;transform:translateX(-100%);transition:transform .25s ease;box-shadow:4px 0 24px rgba(0,0,0,.18);width:240px!important}
   .sidebar.open{transform:translateX(0)}
   .layout{flex-direction:column}
   .main{padding:14px 12px}
-  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stats-grid{grid-template-columns:repeat(2,1fr)!important;gap:10px}
   .stat-card{padding:14px}
   .stat-value{font-size:17px}
   .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:8px}
@@ -357,6 +358,10 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
     <div id="fb-status" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin-left:8px">
       <span id="fb-dot" style="width:7px;height:7px;border-radius:50%;background:#6b7280;display:inline-block"></span>
       <span id="fb-text">Conectando...</span>
+    </div>
+    <div id="admin-presence" style="display:none;align-items:center;gap:5px;font-size:11px;color:#94a3b8;margin-left:12px;border-left:1px solid rgba(255,255,255,.1);padding-left:12px">
+      <span id="admin-dot" style="width:8px;height:8px;border-radius:50%;background:#6b7280;display:inline-block;transition:background .5s"></span>
+      <span id="admin-text">Admin desconectado</span>
     </div>
     <div class="topbar-spacer"></div>
     <div class="topbar-user" onclick="toggleUserMenu()">
@@ -714,6 +719,9 @@ function startAlertSystem(){
 function _ejecutarLogin(user){
   loginIntentos=0;loginBloqueado=false;if(loginTimer)clearInterval(loginTimer);
   currentUser=user;
+  window._appListo=false;   // Se activa tras fbIniciar
+  window._fbResuelto=false; // Se activa tras fbIniciar
+  window._fbActivo=false;   // Se activa si Firebase conecta
   addLog('LOGIN','Inicio de sesión exitoso');
   document.getElementById('login-error').style.display='none';
   document.getElementById('login-screen').style.display='none';
@@ -723,8 +731,17 @@ function _ejecutarLogin(user){
   buildNav();
   applyConfig();
   if(typeof fbIniciar==='function'){
-    fbIniciar().then(()=>{ mostrarBienvenida(user); setTimeout(startAlertSystem,1500); });
+    fbIniciar().then(()=>{
+      window._appListo=true; // Solo activo DESPUÉS de que Firebase resuelva
+      mostrarBienvenida(user);
+      setTimeout(startAlertSystem,1500);
+    }).catch(()=>{
+      window._appListo=true; // También activo si Firebase falla, para avisar en acciones futuras
+      mostrarBienvenida(user);
+      setTimeout(startAlertSystem,1500);
+    });
   } else {
+    window._appListo=true;
     mostrarBienvenida(user);
     setTimeout(startAlertSystem,1500);
   }
@@ -1150,10 +1167,15 @@ function renderDashboard(){
     const cuota=prest.cuotas.find(x=>x.num===pg.numCuota);
     return a+(cuota?cuota.interes:0);
   },0);
+  // Multas cobradas en el período (ganancia extra)
+  const multasCobradas=pagosFiltrados.reduce((a,pg)=>a+parseFloat(pg.multa||0),0);
+  // Capital cobrado en el período (abonos a capital de los pagos)
+  const capitalCobrado=pagosFiltrados.reduce((a,pg)=>a+parseFloat(pg.monto||0),0)-interesesCobrados;
   // Gastos del período
   const gastosPeriodo=(DB.gastos||[]).filter(g=>enPeriodo(g.fecha)).reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nominaPeriodo=(DB.nomina_pagos||[]).filter(n=>enPeriodo(n.fecha)).reduce((a,n)=>a+parseFloat(n.salario||0),0);
-  const beneficioNeto=interesesCobrados-gastosPeriodo-nominaPeriodo;
+  // Beneficio neto = Intereses cobrados + Multas cobradas
+  const beneficioNeto=interesesCobrados+multasCobradas;
 
   const cuotasVencidas=[];
   DB.prestamos.filter(p=>p.estado==='ACTIVO').forEach(p=>{
@@ -1194,12 +1216,15 @@ function renderDashboard(){
     </div>
     ${cuotasVencidas.length?`<div class="alert alert-danger">⚠️ Tienes <strong>${cuotasVencidas.length}</strong> cuotas vencidas por un monto total de <strong>${fmt(montoVencido)}</strong> — <a href="#" onclick="showPage('vencidas')">Ver todas</a></div>`:''}
     ${cuotasHoy.length?`<div class="alert alert-warning">🔔 Hay <strong>${cuotasHoy.length}</strong> cuotas que vencen en los próximos 7 días</div>`:''}
-    <div class="stats-grid" style="grid-template-columns:repeat(5,1fr)">
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
       <div class="stat-card blue"><div class="stat-ico">💰</div><div class="stat-label">Capital en calle</div><div class="stat-value" style="font-size:16px">${fmt(totalCapital)}</div><div class="stat-sub">${prestActivos.length} préstamos activos</div></div>
-      <div class="stat-card green"><div class="stat-ico">💳</div><div class="stat-label">Cobrado ${dashMes?['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(dashMes)-1]+' '+dashAnio:dashAnio}</div><div class="stat-value" style="font-size:16px">${fmt(totalCobrado)}</div><div class="stat-sub">${pagosFiltrados.length} pagos</div></div>
-      <div class="stat-card amber"><div class="stat-ico">📈</div><div class="stat-label">Intereses cobrados</div><div class="stat-value" style="font-size:16px">${fmt(interesesCobrados)}</div><div class="stat-sub">${dashCliente?'Cliente seleccionado':'Período seleccionado'}</div></div>
-      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub">Intereses - Gastos período</div></div>
+      <div class="stat-card green"><div class="stat-ico">💳</div><div class="stat-label">Capital cobrado ${dashMes?['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(dashMes)-1]+' '+dashAnio:dashAnio}</div><div class="stat-value" style="font-size:16px">${fmt(Math.max(0,capitalCobrado))}</div><div class="stat-sub">${pagosFiltrados.length} pagos registrados</div></div>
       <div class="stat-card red"><div class="stat-ico">⚠️</div><div class="stat-label">Monto vencido</div><div class="stat-value" style="font-size:16px">${fmt(montoVencido)}</div><div class="stat-sub">${cuotasVencidas.length} cuotas en mora</div></div>
+    </div>
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card amber"><div class="stat-ico">📈</div><div class="stat-label">Intereses cobrados</div><div class="stat-value" style="font-size:16px">${fmt(interesesCobrados)}</div><div class="stat-sub">${dashCliente?'Cliente seleccionado':'Período seleccionado'}</div></div>
+      <div class="stat-card" style="border-top:3px solid #f97316;border-top-color:#f97316;background:linear-gradient(135deg,#fff7ed 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">⚡</div><div class="stat-label" style="color:#ea580c">Multas cobradas <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">+ Ganancia extra</span></div><div class="stat-value" style="font-size:16px;color:#ea580c">+${fmt(multasCobradas)}</div><div class="stat-sub">Beneficio adicional por mora</div></div>
+      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub">Intereses + Multas cobradas</div></div>
     </div>
     <div class="two-col">
       <div class="card">
@@ -2135,11 +2160,30 @@ function pgMostrarCuotas(){
   const monedaP=p.moneda||'RD$';
   const fmtP=n=>monedaP+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
   const pct=p.totalPagar>0?Math.round(totalAbonado/p.totalPagar*100):0;
-  // Calcular intereses pagados y pendientes
+  // Calcular intereses pagados y pendientes (incluye pagos parciales)
   const cuotasPagadas=p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO');
-  const interesPagado=cuotasPagadas.reduce((a,cu)=>a+cu.interes,0);
+  // Para parciales: si el abono cubre el interés, se cuenta el interés; proporcional si no
+  const interesPagado=p.cuotas.reduce((a,cu)=>{
+    const est=calcEstadoCuota(cu);
+    if(est==='PAGADO') return a+cu.interes;
+    if(est==='PARCIAL'&&cu.abono>0){
+      // Si el abono >= interés, el interés está pagado
+      return a+Math.min(cu.interes,cu.abono);
+    }
+    return a;
+  },0);
   const interesPendiente=p.totalInteres-interesPagado;
-  const capitalPagado=cuotasPagadas.reduce((a,cu)=>a+cu.capital,0);
+  // Capital pagado: cuotas completas + porción de capital en pagos parciales
+  const capitalPagado=p.cuotas.reduce((a,cu)=>{
+    const est=calcEstadoCuota(cu);
+    if(est==='PAGADO') return a+cu.capital;
+    if(est==='PARCIAL'&&cu.abono>0){
+      // Capital pagado = abono - interés cobrado (lo que sobra del abono va a capital)
+      const capAb=Math.max(0,cu.abono-cu.interes);
+      return a+Math.min(cu.capital,capAb);
+    }
+    return a;
+  },0);
   const capitalPendiente=p.capital-capitalPagado;
   const totalMultasCobradas=p.cuotas.reduce((a,cu)=>a+(cu.multa||0),0);
   document.getElementById('pg-info').innerHTML=`
@@ -2628,11 +2672,13 @@ function imprimirReciboConDatos(pg,p,cuota,tituloModal){
       <div style="font-size:9px;color:#64748b;margin-top:4px;font-style:italic">${montoLetras}</div>
     </div>
     ${pg.notas?`<div style="font-size:10px;color:#64748b;margin-bottom:8px">Notas: ${escHtml(pg.notas)}</div>`:''}
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:16px;padding-top:8px;border-top:1px dashed #cbd5e1">
       <div style="font-size:9px;color:#94a3b8">Doc. generado: ${fmtDate(today())} · ${escHtml(c.empresa||'')}</div>
-      <div style="text-align:center">
-        <div style="border-top:1px solid #374151;width:120px;margin-bottom:3px"></div>
-        <div style="font-size:9px;color:#374151;font-weight:600">Authorized Signature</div>
+      <div style="text-align:center;min-width:220px">
+        <div style="height:52px;border-bottom:2px solid #374151;width:220px;margin:0 auto 6px"></div>
+        <div style="font-size:11px;color:#0f172a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Authorized Signature</div>
+        <div style="font-size:11px;color:#0f172a;font-weight:700;margin-top:3px">${escHtml(pg.nombreCliente||'')}</div>
+        <div style="font-size:9px;color:#64748b;margin-top:1px">${escHtml(c.empresa||'')}</div>
       </div>
     </div>`;
 
@@ -2642,12 +2688,10 @@ function imprimirReciboConDatos(pg,p,cuota,tituloModal){
     .r-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
     .r-title{font-size:15px;font-weight:900;color:#0f172a;letter-spacing:-0.5px}
     .r-num{font-size:11px;color:#3b82f6;font-weight:700;font-family:monospace}
-    .r-cut{border:none;border-top:2px dashed #94a3b8;margin:0;height:0;position:relative;text-align:center}
-    .r-cut::after{content:'✂  Cut here  ✂';position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:#fff;padding:0 12px;font-size:9px;color:#94a3b8;font-family:sans-serif}
     @media print{.r-wrap{width:100%}.r-half{padding:12px 16px}}
   </style>
   <div class="r-wrap" id="doc-print">
-    <!-- COPIA CLIENTE -->
+    <!-- COPIA UNICA -->
     <div class="r-half">
       <div class="r-header">
         ${empresaHtml}
@@ -2659,25 +2703,11 @@ function imprimirReciboConDatos(pg,p,cuota,tituloModal){
       </div>
       ${reciboBody}
     </div>
-    <!-- SEPARADOR -->
-    <hr class="r-cut">
-    <!-- COPIA EMPRESA -->
-    <div class="r-half">
-      <div class="r-header">
-        ${empresaHtml}
-        <div style="text-align:right">
-          <div class="r-title">PAYMENT RECEIPT</div>
-          <div class="r-num">No. ${escHtml(pg.id||'PREVIEW')}</div>
-          <div style="font-size:9px;margin-top:2px;background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:10px;font-weight:700">COMPANY COPY</div>
-        </div>
-      </div>
-      ${reciboBody}
-    </div>
   </div>`;
 
   openModal(tituloModal||'Recibo de Pago', html,
     `<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
-     <button class="btn btn-primary" onclick="printDoc()">🖨️ Imprimir</button>`);
+     <button class="btn btn-amber" onclick="abrirEnPrintFrame(document.getElementById('doc-print').innerHTML,'Recibo de Pago')">📄 PDF / Imprimir</button>`);
 }
 
 
@@ -4534,20 +4564,35 @@ function fbEscucharCambios(){
 const _sDB_orig = sDB;
 window._fbActivo = false;
 window.sDB = function(key){
-  try { _sDB_orig(key); } catch(e){}
-  if(window._fbActivo){
-    const dot=document.getElementById('fb-dot');
-    const txt=document.getElementById('fb-text');
-    if(dot) dot.style.background='#f59e0b';
-    if(txt) txt.textContent='Guardando...';
-    fbGuardar(key).then(()=>{
-      if(dot) dot.style.background='#22c55e';
-      if(txt) txt.textContent='✓ Guardado';
-    }).catch(()=>{
+  if(!window._fbActivo){
+    // Solo mostrar aviso si Firebase ya terminó de intentar conectar (resuelto) Y el usuario está activo
+    // Durante el arranque (_fbResuelto=false) simplemente no guardamos sin avisar
+    if(window._fbResuelto && window._appListo){
+      const dot=document.getElementById('fb-dot');
+      const txt=document.getElementById('fb-text');
       if(dot) dot.style.background='#ef4444';
-      if(txt) txt.textContent='Error al guardar';
-    });
+      if(txt) txt.textContent='Sin conexión';
+      if(!window._fbOfflineToastShown){
+        window._fbOfflineToastShown=true;
+        setTimeout(()=>{window._fbOfflineToastShown=false;},8000);
+        toast('⚠️ Sin conexión a Firebase — Comuníquese con el administrador Edward Villa al 849-857-9190','error');
+      }
+    }
+    return; // No guardar nada
   }
+  try { _sDB_orig(key); } catch(e){}
+  const dot=document.getElementById('fb-dot');
+  const txt=document.getElementById('fb-text');
+  if(dot) dot.style.background='#f59e0b';
+  if(txt) txt.textContent='Guardando...';
+  fbGuardar(key).then(()=>{
+    if(dot) dot.style.background='#22c55e';
+    if(txt) txt.textContent='✓ Guardado';
+  }).catch(()=>{
+    if(dot) dot.style.background='#ef4444';
+    if(txt) txt.textContent='Error al guardar';
+    toast('⚠️ Error al guardar — Comuníquese con el administrador Edward Villa al 849-857-9190','error');
+  });
 };
 
 window.fbIniciar = async function(){
@@ -4578,11 +4623,42 @@ window.fbIniciar = async function(){
       setStatus('#22c55e','✓ Firebase');
     fbEscucharCambios();
     }
+    // Iniciar indicador de presencia del administrador
+    _fbIniciarPresencia();
   } catch(e) {
     setStatus('#ef4444','Sin conexión');
     console.warn('Firebase error:', e.message);
+  } finally {
+    window._fbResuelto = true; // Firebase ya terminó de intentar conectar
   }
 };
+
+function _fbIniciarPresencia(){
+  try {
+    const presEl=document.getElementById('admin-presence');
+    const aDot=document.getElementById('admin-dot');
+    const aTxt=document.getElementById('admin-text');
+    if(presEl) presEl.style.display='flex';
+    // Si el usuario actual es admin, marcar su presencia
+    if(currentUser&&(currentUser.role==='admin'||currentUser.role==='dueno')){
+      const presRef=_fbDB.collection('thunder').doc('presencia');
+      presRef.set({adminOnline:true,adminNombre:currentUser.nombre,ts:Date.now()},{merge:true});
+      // Limpiar presencia al cerrar
+      window.addEventListener('beforeunload',()=>{
+        presRef.set({adminOnline:false,ts:Date.now()},{merge:true});
+      });
+    }
+    // Escuchar presencia del admin en tiempo real
+    _fbDB.collection('thunder').doc('presencia').onSnapshot(snap=>{
+      if(!snap.exists){if(aDot)aDot.style.background='#6b7280';if(aTxt)aTxt.textContent='Admin desconectado';return;}
+      const d=snap.data();
+      const esReciente=(Date.now()-(d.ts||0))<120000; // 2 minutos
+      const online=d.adminOnline&&esReciente;
+      if(aDot) aDot.style.background=online?'#22c55e':'#6b7280';
+      if(aTxt) aTxt.textContent=online?('🟢 '+(d.adminNombre||'Admin')+' en línea'):'Admin desconectado';
+    });
+  } catch(e){ console.warn('Presence error:',e.message); }
+}
 </script>
 </body>
 </html>
