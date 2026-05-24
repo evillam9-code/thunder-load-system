@@ -3202,68 +3202,58 @@ function intEspRegistrar(idPrestamo, numCuota){
   const periodoLabel=p.formaPago==='Weekly'?'semana':p.formaPago==='Biweekly'?'quincena':'mes';
 
   // ══════════════════════════════════════════════════════════
-  // CAPITAL + INTERÉS: cobrar interés+multa, borrar capital
-  // de la cuota, crear cuota nueva al final con ese capital
+  // CAPITAL + INTERÉS:
+  // - La cuota NO se toca (capital, interés, fecha quedan igual)
+  // - Solo se aplica abono+multa → PARCIAL
+  // - Se agrega 1 cuota NUEVA al final con mismo capital+interés fijo
+  // - Ninguna otra cuota cambia
   // ══════════════════════════════════════════════════════════
   if(!esIO){
     const capitalCuota=parseFloat(cu.capital||0);
+    const interesFijo=parseFloat(cu.interes||0);
 
-    // 1. Registrar interés+multa como abono en la cuota
+    // 1. Aplicar abono+multa a la cuota — TODO LO DEMÁS INTACTO
     cu.abono=parseFloat(((cu.abono||0)+interes+multa).toFixed(2));
     cu.multa=parseFloat(((cu.multa||0)+multa).toFixed(2));
     cu.fechaPago=fecha;
     cu.cobrador=cobrador;
     cu.metodo=metodo;
     cu.notas=notas;
-    // La cuota queda con capital=0, interés cobrado → PAGADO de interés
-    cu._capitalMovido=capitalCuota; // auditoría
-    cu.capital=0;
-    cu.amortizacion=parseFloat((cu.interes).toFixed(2));
-    cu.estado=cu.abono>=cu.amortizacion?'PAGADO':'PARCIAL';
+    // capital, interes, amortizacion, fechaCuota — NO SE TOCAN
+    cu.estado='PARCIAL';
 
-    // 2. Registrar en historial de pagos como pago normal
+    // 2. Registrar en historial de pagos
     DB.pagos.push({
       id:uid(),idPrestamo,idCliente:p.idCliente,nombreCliente:p.nombreCliente,
       numCuota,monto:interes,multa,fecha,metodo,cobrador,notas,moneda:monedaP,
       tipo:'INTERES_SOLO',
       fechaVencimiento:cu.fechaCuota,
-      estadoCuota:cu.estado,
-      capitalMovido:capitalCuota,
+      estadoCuota:'PARCIAL',
       registradoPor:currentUser.username
     });
 
-    // 3. Crear cuota nueva al final con el capital que se movió
-    if(capitalCuota>0){
-      const ultimaCuota=p.cuotas[p.cuotas.length-1];
-      const nuevaFecha=intEspAvanzarFecha(ultimaCuota.fechaCuota,p.formaPago);
-      const tasaMensual=parseFloat(p.tasa||0)/100;
-      const tasaPeriodo=p.formaPago==='Weekly'?tasaMensual/4:p.formaPago==='Biweekly'?tasaMensual/2:tasaMensual;
-      const interesNueva=parseFloat((capitalCuota*tasaPeriodo).toFixed(2));
-      const nuevaNum=p.cuotas.length+1;
-      p.cuotas.push({
-        num:nuevaNum,
-        fechaCuota:nuevaFecha,
-        capital:capitalCuota,
-        interes:interesNueva,
-        amortizacion:parseFloat((capitalCuota+interesNueva).toFixed(2)),
-        abono:0,multa:0,mora:0,
-        estado:'PENDIENTE',
-        modalidad:p.modalidad,
-        _origenCapitalMovido:true,
-        _cuotaOriginal:numCuota
-      });
-    }
-
-    // 4. Correr fechas de cuotas pendientes siguientes 1 período
-    p.cuotas
-      .filter(c=>c.num>numCuota&&calcEstadoCuota(c)!=='PAGADO'&&!c._origenCapitalMovido)
-      .sort((a,b)=>a.num-b.num)
-      .forEach(c=>{c.fechaCuota=intEspAvanzarFecha(c.fechaCuota,p.formaPago);});
+    // 3. Agregar 1 cuota NUEVA al final con mismo capital+interés fijo
+    // Las demás cuotas NO se mueven — fechas todas intactas
+    const ultimaCuota=p.cuotas[p.cuotas.length-1];
+    const nuevaFecha=intEspAvanzarFecha(ultimaCuota.fechaCuota,p.formaPago);
+    const nuevaNum=p.cuotas.length+1;
+    p.cuotas.push({
+      num:nuevaNum,
+      fechaCuota:nuevaFecha,
+      capital:capitalCuota,
+      interes:interesFijo,
+      amortizacion:parseFloat((capitalCuota+interesFijo).toFixed(2)),
+      abono:0,multa:0,mora:0,
+      estado:'PENDIENTE',
+      modalidad:p.modalidad,
+      _origenSoloInteres:true,
+      _cuotaOriginal:numCuota
+    });
 
     sDB('prestamos');sDB('pagos');
-    addLog('PAGO','Solo Interés cobrado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | '+fmtP(interes)+' int. + '+fmtP(multa)+' multa | Capital $'+capitalCuota+' movido al final | '+cobrador);
+    addLog('PAGO','Solo Interés cobrado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | '+fmtP(interes)+' int. + '+fmtP(multa)+' multa | Nueva cuota #'+nuevaNum+' al final | '+cobrador);
     closeModal();
-    toast('💰 '+fmtP(interes+multa)+' cobrado — Capital $'+capitalCuota+' extendido al final del préstamo','success');
+    toast('💰 '+fmtP(interes+multa)+' cobrado — Cuota #'+numCuota+' PARCIAL. Nueva cuota #'+nuevaNum+' agregada al final','success');
     pgMostrarCuotas();
     return;
   }
@@ -5219,7 +5209,7 @@ window.fbIniciar = async function(){
       // Reset único de P00001 — solo si tiene cuotas dañadas
       setTimeout(()=>{
         const p1=DB.prestamos.find(x=>x.id==='P00001');
-        if(p1&&(p1.cuotas.some(c=>c._origenCapitalMovido)||p1.cuotas.some(c=>c.capital===0&&c.abono>0&&!c._capitalMovido===undefined))){
+        if(p1&&(p1.cuotas.some(c=>c._origenCapitalMovido||c._origenSoloInteres)||p1.cuotas.some(c=>c.capital===0&&c.abono>0&&p1.modalidad!=='interest_only'))){
           console.log('[Reset] Detectado P00001 con cuotas dañadas — restableciendo...');
           resetPrestamo('P00001');
         }
@@ -5451,44 +5441,44 @@ function repararIntEspCapitalInteres(){
     if(!cu)return;
 
     const capitalCuota=parseFloat(cu.capital||0);
+    const interesFijo=parseFloat(cu.interes||0);
     const interes=parseFloat(ie.interes||0);
     const multa=parseFloat(ie.multa||0);
 
-    // Aplicar interés+multa como abono en la cuota
+    // Restaurar capital e interés original si fueron borrados
+    if(cu._capitalMovido&&cu.capital===0){
+      cu.capital=cu._capitalMovido;
+      cu.amortizacion=parseFloat((cu.capital+cu.interes).toFixed(2));
+      cu._capitalMovido=null;
+    }
+
+    // Aplicar interés+multa como abono — cuota queda PARCIAL
     cu.abono=parseFloat(((cu.abono||0)+interes+multa).toFixed(2));
     cu.multa=parseFloat(((cu.multa||0)+multa).toFixed(2));
     cu.fechaPago=ie.fecha;
     cu.cobrador=ie.cobrador;
     cu.metodo=ie.metodo;
-    if(capitalCuota>0){
-      cu._capitalMovido=capitalCuota;
-      cu.capital=0;
-      cu.amortizacion=parseFloat((cu.interes).toFixed(2));
-    }
-    cu.estado=cu.abono>=cu.amortizacion?'PAGADO':'PARCIAL';
+    cu.estado='PARCIAL';
 
-    // Crear cuota nueva al final con el capital movido
-    if(capitalCuota>0){
-      const yaExiste=p.cuotas.find(c=>c._cuotaOriginal===ie.numCuota&&c._origenCapitalMovido);
-      if(!yaExiste){
-        const ultimaCuota=p.cuotas[p.cuotas.length-1];
-        const nuevaFecha=intEspAvanzarFecha(ultimaCuota.fechaCuota,p.formaPago);
-        const tasaMensual=parseFloat(p.tasa||0)/100;
-        const tasaPeriodo=p.formaPago==='Weekly'?tasaMensual/4:p.formaPago==='Biweekly'?tasaMensual/2:tasaMensual;
-        const interesNueva=parseFloat((capitalCuota*tasaPeriodo).toFixed(2));
-        p.cuotas.push({
-          num:p.cuotas.length+1,
-          fechaCuota:nuevaFecha,
-          capital:capitalCuota,
-          interes:interesNueva,
-          amortizacion:parseFloat((capitalCuota+interesNueva).toFixed(2)),
-          abono:0,multa:0,mora:0,
-          estado:'PENDIENTE',
-          modalidad:p.modalidad,
-          _origenCapitalMovido:true,
-          _cuotaOriginal:ie.numCuota
-        });
-      }
+    // Agregar cuota nueva al final con mismo capital+interés fijo
+    const yaExiste=p.cuotas.find(c=>c._cuotaOriginal===ie.numCuota&&c._origenSoloInteres);
+    if(!yaExiste){
+      // Eliminar cuotas mal creadas con capital=0 o interés incorrecto
+      p.cuotas=p.cuotas.filter(c=>!(c._cuotaOriginal===ie.numCuota&&(c._origenCapitalMovido||c._origenSoloInteres)));
+      const ultimaCuota=p.cuotas[p.cuotas.length-1];
+      const nuevaFecha=intEspAvanzarFecha(ultimaCuota.fechaCuota,p.formaPago);
+      p.cuotas.push({
+        num:p.cuotas.length+1,
+        fechaCuota:nuevaFecha,
+        capital:capitalCuota||cu.capital,
+        interes:interesFijo||cu.interes,
+        amortizacion:parseFloat(((capitalCuota||cu.capital)+(interesFijo||cu.interes)).toFixed(2)),
+        abono:0,multa:0,mora:0,
+        estado:'PENDIENTE',
+        modalidad:p.modalidad,
+        _origenSoloInteres:true,
+        _cuotaOriginal:ie.numCuota
+      });
     }
 
     // Convertir INTERES_ESP en pago normal en DB.pagos
