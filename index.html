@@ -76,7 +76,7 @@ body.modo-editor table th:hover{outline:2px dashed #7c3aed;outline-offset:-2px}
 /* Bloqueo visual para visitante */
 body.rol-visitante .btn-primary,body.rol-visitante .btn-green,body.rol-visitante .btn-red,body.rol-visitante .btn-amber{pointer-events:none;opacity:.45}
 /* ── APP ── */
-#app{display:none;min-height:100vh}
+#app{display:none;height:100vh;overflow:hidden}
 /* TOPBAR */
 .topbar{background:var(--navy);color:var(--white);height:56px;display:flex;align-items:center;padding:0 20px;gap:16px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.3)}
 .topbar-brand{font-size:16px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:8px}
@@ -92,9 +92,9 @@ body.rol-visitante .btn-primary,body.rol-visitante .btn-green,body.rol-visitante
 .user-menu-item:hover{background:var(--gray2)}
 .user-menu-item.danger{color:var(--red)}
 /* LAYOUT */
-.layout{display:flex;min-height:calc(100vh - 56px)}
+.layout{display:flex;height:calc(100vh - 56px);overflow:hidden}
 /* SIDEBAR */
-.sidebar{width:240px;background:#f8fafd;border-right:1px solid var(--gray3);flex-shrink:0;padding:16px 0;overflow-y:auto}
+.sidebar{width:240px;background:#f8fafd;border-right:1px solid var(--gray3);flex-shrink:0;padding:16px 0;overflow-y:auto;position:sticky;top:0;height:calc(100vh - 56px);align-self:flex-start}
 .sidebar-section{margin-bottom:8px}
 .sidebar-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--gray);padding:8px 16px 4px}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:0;font-size:13px;font-weight:500;color:var(--navy3);transition:.15s;border-left:3px solid transparent}
@@ -102,7 +102,7 @@ body.rol-visitante .btn-primary,body.rol-visitante .btn-green,body.rol-visitante
 .nav-item.active{background:var(--blue3);color:var(--blue);border-left-color:var(--blue);font-weight:600}
 .nav-item .ico{font-size:16px;width:20px;text-align:center}
 /* MAIN */
-.main{flex:1;padding:24px;overflow-y:auto}
+.main{flex:1;padding:24px;overflow-y:auto;height:100%}
 .page{display:none}
 .page.active{display:block}
 /* CARDS */
@@ -725,6 +725,9 @@ function _ejecutarLogin(user){
   window._fbActivo=false;   // Se activa si Firebase conecta
   addLog('LOGIN','Inicio de sesión exitoso');
   if(typeof window._resetInactividad==='function') window._resetInactividad();
+  // Reparar cuotas dañadas cada vez que el usuario entra
+  setTimeout(repararCuotasInterestOnly, 600);
+  setTimeout(repararCuotasMalMarcadas, 900);
   document.getElementById('login-error').style.display='none';
   document.getElementById('login-screen').style.display='none';
   document.getElementById('top-username').textContent=user.nombre;
@@ -2566,6 +2569,11 @@ function pgConfirmarPagoMonto(idPrestamo,numCuota,monto,multa,fecha,metodo,cobra
     registradoPor:currentUser.username};
   DB.pagos.push(pago);sDB('pagos');
 
+  // Verificar estado correcto inmediatamente después del pago
+  if(cuota.estado==='PAGADO' && cuota.amortizacion>0.01 && cuota.abono<cuota.amortizacion-0.01){
+    cuota.estado='PARCIAL';
+    sDB('prestamos');
+  }
   closeModal();
   const msgEstado = cuota.estado==='PAGADO' ? '✅ Cuota #'+numCuota+' pagada completamente' : '💳 Abono registrado en cuota #'+numCuota;
   toast(msgEstado+' — '+monedaP+' '+parseFloat(monto).toLocaleString('es-DO',{minimumFractionDigits:2}), cuota.estado==='PAGADO'?'success':'');
@@ -5272,30 +5280,42 @@ function repararCuotasMalMarcadas(){
     p.cuotas.forEach(cu=>{
       const abonoReal=parseFloat(cu.abono||0);
       const amort=parseFloat(cu.amortizacion||0);
-      // Si está PAGADO pero el abono no cubre la amortizacion → corregir a PARCIAL
-      if(cu.estado==='PAGADO' && amort>0 && abonoReal>0 && abonoReal<amort-0.01){
+
+      // CASO 1: PAGADO pero abono no cubre amortizacion → PARCIAL
+      if(cu.estado==='PAGADO' && amort>0.01 && abonoReal<amort-0.01){
         cu.estado='PARCIAL';
+        console.warn('[Repair] '+p.id+' cuota #'+cu.num+': PAGADO→PARCIAL (abono='+abonoReal+' amort='+amort+')');
         reparadas++;
-        console.log('Reparada cuota '+cu.num+' de '+p.id+': PAGADO→PARCIAL (abono='+abonoReal+' < amort='+amort+')');
       }
-      // Si está PAGADO pero abono=0 y amortizacion>0 → corregir a PENDIENTE/VENCIDA
-      if(cu.estado==='PAGADO' && amort>0 && abonoReal===0){
+
+      // CASO 2: PAGADO con abono=0 y amortizacion>0 → PENDIENTE o VENCIDA
+      if(cu.estado==='PAGADO' && amort>0.01 && abonoReal===0){
         cu.estado='PENDIENTE';
         cu.fechaPago=null;
+        console.warn('[Repair] '+p.id+' cuota #'+cu.num+': PAGADO→PENDIENTE (abono=0)');
+        reparadas++;
+      }
+
+      // CASO 3: PARCIAL con abono >= amortizacion → PAGADO
+      if(cu.estado==='PARCIAL' && amort>0.01 && abonoReal>=amort-0.01){
+        cu.estado='PAGADO';
+        console.warn('[Repair] '+p.id+' cuota #'+cu.num+': PARCIAL→PAGADO (abono='+abonoReal+' >= amort='+amort+')');
         reparadas++;
       }
     });
+
     // Reactivar préstamo si fue mal marcado como CANCELADO
     const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
     if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
       p.estado='ACTIVO';
+      console.warn('[Repair] '+p.id+': CANCELADO→ACTIVO');
       reparadas++;
     }
   });
   if(reparadas>0){
     sDB('prestamos');
     console.log('Thunder Load: '+reparadas+' cuotas mal marcadas corregidas');
-    addLog('CONFIG','Reparación: '+reparadas+' cuotas con estado incorrecto corregidas');
+    addLog('CONFIG','Reparación automática: '+reparadas+' cuotas con estado incorrecto corregidas');
   }
 }
 
