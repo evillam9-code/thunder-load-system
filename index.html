@@ -3212,15 +3212,19 @@ function intEspRegistrar(idPrestamo, numCuota){
     const capitalCuota=parseFloat(cu.capital||0);
     const interesFijo=parseFloat(cu.interes||0);
 
-    // 1. Aplicar abono+multa a la cuota — TODO LO DEMÁS INTACTO
+    // 1. Cobrar interés+multa en la cuota original
+    //    Capital se mueve a cuota nueva → aquí queda en 0
+    cu._capitalOriginalSoloInteres=capitalCuota; // auditoría
+    cu.capital=0;
+    cu.amortizacion=interesFijo; // solo el interés
     cu.abono=parseFloat(((cu.abono||0)+interes+multa).toFixed(2));
     cu.multa=parseFloat(((cu.multa||0)+multa).toFixed(2));
     cu.fechaPago=fecha;
     cu.cobrador=cobrador;
     cu.metodo=metodo;
     cu.notas=notas;
-    // capital, interes, amortizacion, fechaCuota — NO SE TOCAN
-    cu.estado='PARCIAL';
+    // Estado: PAGADO si el abono cubre el interés, PARCIAL si no
+    cu.estado=cu.abono>=cu.amortizacion?'PAGADO':'PARCIAL';
 
     // 2. Registrar en historial de pagos
     DB.pagos.push({
@@ -5209,7 +5213,7 @@ window.fbIniciar = async function(){
       // Reset único de P00001 — solo si tiene cuotas dañadas
       setTimeout(()=>{
         const p1=DB.prestamos.find(x=>x.id==='P00001');
-        if(p1&&(p1.cuotas.some(c=>c._origenCapitalMovido||c._origenSoloInteres)||p1.cuotas.some(c=>c.capital===0&&c.abono>0&&p1.modalidad!=='interest_only'))){
+        if(p1&&(p1.cuotas.some(c=>c._origenCapitalMovido||c._origenSoloInteres||c._capitalOriginalSoloInteres))){
           console.log('[Reset] Detectado P00001 con cuotas dañadas — restableciendo...');
           resetPrestamo('P00001');
         }
@@ -5445,20 +5449,17 @@ function repararIntEspCapitalInteres(){
     const interes=parseFloat(ie.interes||0);
     const multa=parseFloat(ie.multa||0);
 
-    // Restaurar capital e interés original si fueron borrados
-    if(cu._capitalMovido&&cu.capital===0){
-      cu.capital=cu._capitalMovido;
-      cu.amortizacion=parseFloat((cu.capital+cu.interes).toFixed(2));
-      cu._capitalMovido=null;
-    }
-
-    // Aplicar interés+multa como abono — cuota queda PARCIAL
+    // Aplicar lógica correcta: capital=0 en cuota original, cobrar interés
+    const interesOriginal=interesFijo||cu.interes;
+    cu._capitalOriginalSoloInteres=capitalCuota||cu.capital;
+    cu.capital=0;
+    cu.amortizacion=interesOriginal;
     cu.abono=parseFloat(((cu.abono||0)+interes+multa).toFixed(2));
     cu.multa=parseFloat(((cu.multa||0)+multa).toFixed(2));
     cu.fechaPago=ie.fecha;
     cu.cobrador=ie.cobrador;
     cu.metodo=ie.metodo;
-    cu.estado='PARCIAL';
+    cu.estado=cu.abono>=cu.amortizacion?'PAGADO':'PARCIAL';
 
     // Agregar cuota nueva al final con mismo capital+interés fijo
     const yaExiste=p.cuotas.find(c=>c._cuotaOriginal===ie.numCuota&&c._origenSoloInteres);
