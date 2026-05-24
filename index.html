@@ -5216,6 +5216,14 @@ window.fbIniciar = async function(){
       setTimeout(repararCuotasInterestOnly,500);
       setTimeout(repararCuotasMalMarcadas,800);
       setTimeout(repararIntEspCapitalInteres,1100);
+      // Reset único de P00001 — solo si tiene cuotas dañadas
+      setTimeout(()=>{
+        const p1=DB.prestamos.find(x=>x.id==='P00001');
+        if(p1&&(p1.cuotas.some(c=>c._origenCapitalMovido)||p1.cuotas.some(c=>c.capital===0&&c.abono>0&&!c._capitalMovido===undefined))){
+          console.log('[Reset] Detectado P00001 con cuotas dañadas — restableciendo...');
+          resetPrestamo('P00001');
+        }
+      },1400);
       // Proteger sesión activa
       if(currentUser){
         const userActualizado = DB.users.find(u=>u.id===currentUser.id);
@@ -5383,6 +5391,45 @@ function repararCuotasMalMarcadas(){
     console.log('Thunder Load: '+reparadas+' cuotas mal marcadas corregidas');
     addLog('CONFIG','Reparación automática: '+reparadas+' cuotas con estado incorrecto corregidas');
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// RESET PRÉSTAMO: Regenera cuotas desde datos originales del préstamo
+// Limpia todos los pagos, abonos e intereses especiales
+// ══════════════════════════════════════════════════════════════
+function resetPrestamo(idPrestamo){
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);
+  if(!p){console.warn('Préstamo no encontrado:',idPrestamo);return;}
+
+  // Regenerar cuotas originales usando los datos del préstamo
+  // fechaSolicitud es la fecha de inicio del préstamo
+  const fechaBase=p.fechaSolicitud||p.fechaInicio||p.fechaDesembolso;
+  if(!fechaBase){console.warn('[Reset] Sin fecha de inicio para',idPrestamo);return;}
+  const cuotasOriginales=calcAmortizacion(
+    p.capital,
+    p.tasa,
+    p.numCuotas,
+    fechaBase,
+    p.formaPago,
+    p.modalidad||'capital_interes'
+  );
+
+  // Restaurar cuotas limpias
+  p.cuotas=cuotasOriginales;
+  p.estado='ACTIVO';
+
+  // Limpiar pagos de este préstamo
+  DB.pagos=DB.pagos.filter(x=>x.idPrestamo!==idPrestamo);
+
+  // Limpiar intereses especiales de este préstamo
+  DB.interesesEsp=(DB.interesesEsp||[]).filter(x=>x.idPrestamo!==idPrestamo);
+
+  // Limpiar abonos de este préstamo
+  DB.abonos=(DB.abonos||[]).filter(x=>x.idPrestamo!==idPrestamo);
+
+  sDB('prestamos');sDB('pagos');sDB('interesesEsp');sDB('abonos');
+  console.log('[Reset] Préstamo '+idPrestamo+' restablecido con '+cuotasOriginales.length+' cuotas limpias');
+  addLog('CONFIG','Reset préstamo: '+idPrestamo+' restablecido a estado original');
 }
 
 // ══════════════════════════════════════════════════════════════
