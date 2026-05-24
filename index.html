@@ -1790,51 +1790,109 @@ function renderPrestamos(){
 function verPrestamo(id){
   const p=DB.prestamos.find(x=>x.id===id);
   if(!p)return;
-  const cuotasPag=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').length;
-  const cuotasVenc=p.cuotas.filter(c=>calcEstadoCuota(c)==='VENCIDA').length;
-  const cuotasPend=p.cuotas.filter(c=>{const e=calcEstadoCuota(c);return e==='PENDIENTE'||e==='PARCIAL';}).length;
-  const totalAbonado=p.cuotas.reduce((a,c)=>a+(c.abono||0),0);
-  const totalMultas=p.cuotas.reduce((a,c)=>a+(c.multa||0),0);
+  const esIO=p.modalidad==='interest_only';
+  const monedaP=p.moneda||'RD$';
+
+  // Totales
+  const cuotasPag  =p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').length;
+  const cuotasVenc =p.cuotas.filter(c=>calcEstadoCuota(c)==='VENCIDA').length;
+  const cuotasPend =p.cuotas.filter(c=>{const e=calcEstadoCuota(c);return e==='PENDIENTE'||e==='PARCIAL';}).length;
+  const capitalCobrado=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').reduce((a,c)=>a+(c.capital||0),0);
+  const abonosExtra=(DB.abonos||[]).filter(a=>a.idPrestamo===id).reduce((a,x)=>a+(x.monto||0),0);
+  const capitalPendiente=Math.max(0,(p.capital||0)-capitalCobrado-abonosExtra);
+  const interesesCobrados=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').reduce((a,c)=>a+(c.interes||0),0);
+  const intEspPrest=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===id);
+  const interesesEsp=intEspPrest.reduce((a,x)=>a+(x.interes||0),0);
+  const multasEsp=intEspPrest.reduce((a,x)=>a+(x.multa||0),0);
+  const totalMultas=p.cuotas.reduce((a,c)=>a+(c.multa||0),0)+multasEsp;
+  const beneficioTotal=parseFloat((interesesCobrados+interesesEsp+totalMultas).toFixed(2));
   const _canEd=isAdmin()||canEdit('prestamos');
   const _canDel=isAdmin()||canDelete('prestamos');
+
+  // Filas cuotas con desglose capital/interes
   const filasHTML=p.cuotas.map(c=>{
     const est=calcEstadoCuota(c);
     const bc={PAGADO:'badge-green',VENCIDA:'badge-red',PENDIENTE:'badge-amber',PARCIAL:'badge-purple'};
-    const btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:11px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar">&#x270F;</button>'):'';
-    const btnDel=(_canDel&&(est==='PAGADO'||est==='PARCIAL'))?('<button class="btn btn-red" style="padding:2px 6px;font-size:11px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
-    const btnTd=(_canEd||_canDel)?('<td style="white-space:nowrap;text-align:center">'+btnEd+btnDel+'</td>'):'';
-    return '<tr>'
-      +'<td style="text-align:center">'+c.num+'</td>'
+    const btnEd=_canEd?('<button class="btn btn-secondary" style="padding:2px 6px;font-size:10px" onclick="editarPago(\''+id+'\','+c.num+')" title="Editar">&#x270F;</button>'):'';
+    const btnDel=(_canDel&&(est==='PAGADO'||est==='PARCIAL'))?('<button class="btn btn-red" style="padding:2px 6px;font-size:10px;margin-left:2px" onclick="limpiarPago(\''+id+'\','+c.num+')" title="Revertir">&#x2717;</button>'):'';
+    const btnTd=(_canEd||_canDel)?('<td style="white-space:nowrap">'+btnEd+btnDel+'</td>'):'';
+    const intEspCuota=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===id&&x.numCuota===c.num);
+    const intEspBadge=intEspCuota.length?(' <span style="font-size:9px;background:var(--amber);color:white;padding:1px 4px;border-radius:6px">⚡'+intEspCuota.length+'</span>'):'';
+    // Estimado: de lo abonado, hasta cu.interes es interés, el resto capital
+    const abonoTotal=c.abono||0;
+    const abonoInteres=est==='PAGADO'?(c.interes||0):Math.min(abonoTotal,c.interes||0);
+    const abonoCapital=est==='PAGADO'?(c.capital||0):Math.max(0,abonoTotal-(c.interes||0));
+    const rowBg=est==='VENCIDA'?'background:#fef2f2':est==='PAGADO'?'background:#f0fdf4':'';
+    return '<tr style="'+rowBg+';font-size:11px">'
+      +'<td style="text-align:center;font-weight:700">'+c.num+'</td>'
       +'<td>'+fmtDate(c.fechaCuota)+'</td>'
+      +'<td style="color:var(--gray)">'+fmt(c.capital||0)+'</td>'
+      +'<td style="color:var(--blue)">'+fmt(c.interes||0)+intEspBadge+'</td>'
       +'<td style="font-weight:700">'+fmt(c.amortizacion)+'</td>'
-      +'<td style="color:var(--green);font-weight:600">'+(c.abono?fmt(c.abono):'—')+'</td>'
+      +'<td style="color:var(--green)">'+(abonoCapital>0?fmt(abonoCapital):'—')+'</td>'
+      +'<td style="color:var(--blue)">'+(abonoInteres>0?fmt(abonoInteres):'—')+'</td>'
       +'<td style="color:var(--red)">'+(c.multa?fmt(c.multa):'—')+'</td>'
-      +'<td>'+fmtDate(c.fechaPago)+'</td>'
-      +'<td><span class="badge '+bc[est]+'">'+est+'</span></td>'
+      +'<td style="color:var(--gray);font-size:10px">'+fmtDate(c.fechaPago)+'</td>'
+      +'<td><span class="badge '+bc[est]+'" style="font-size:9px">'+est+'</span></td>'
       +btnTd+'</tr>';
   }).join('');
   const thAcc=(_canEd||_canDel)?'<th></th>':'';
-  const modalBody='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">'
-    +'<div style="padding:10px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--green)">'+cuotasPag+'</div><div style="font-size:11px">Pagadas</div></div>'
-    +'<div style="padding:10px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--amber)">'+cuotasPend+'</div><div style="font-size:11px">Pendientes</div></div>'
-    +'<div style="padding:10px;background:var(--red2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--red)">'+cuotasVenc+'</div><div style="font-size:11px">Vencidas</div></div>'
+
+  // Filas abonos a capital
+  const abonosRows=(DB.abonos||[]).filter(a=>a.idPrestamo===id).slice().reverse().map(a=>
+    '<tr style="font-size:11px">'
+    +'<td>'+fmtDate(a.fecha)+'</td>'
+    +'<td style="color:var(--blue);font-weight:700">'+fmt(a.monto)+'</td>'
+    +'<td><span class="badge badge-blue" style="font-size:9px">'+escHtml(a.metodo||'Cash')+'</span></td>'
+    +'<td style="color:var(--gray)">'+escHtml(a.notas||'—')+'</td>'
+    +'</tr>'
+  ).join('')||'<tr><td colspan="4" style="text-align:center;color:var(--gray);padding:6px;font-size:11px">Sin abonos a capital</td></tr>';
+
+  // Filas cobros especiales
+  const intEspRows=intEspPrest.slice().reverse().map(x=>
+    '<tr style="font-size:11px">'
+    +'<td>'+fmtDate(x.fecha)+'</td>'
+    +'<td style="text-align:center">'+x.numCuota+'</td>'
+    +'<td style="color:var(--amber);font-weight:700">'+fmt(x.interes)+'</td>'
+    +'<td style="color:var(--red)">'+fmt(x.multa||0)+'</td>'
+    +'<td style="font-weight:700">'+fmt((x.interes||0)+(x.multa||0))+'</td>'
+    +'<td><span class="badge badge-blue" style="font-size:9px">'+escHtml(x.metodo||'Cash')+'</span></td>'
+    +'<td style="color:var(--gray)">'+escHtml(x.cobrador||'—')+'</td>'
+    +'</tr>'
+  ).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--gray);padding:6px;font-size:11px">Sin cobros especiales</td></tr>';
+
+  const modalBody=
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">'
+    +'<div style="padding:8px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--green);font-size:16px">'+cuotasPag+'</div><div style="font-size:10px">Pagadas</div></div>'
+    +'<div style="padding:8px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--amber);font-size:16px">'+cuotasPend+'</div><div style="font-size:10px">Pendientes</div></div>'
+    +'<div style="padding:8px;background:var(--red2);border-radius:var(--radius-sm);text-align:center"><div style="font-weight:800;color:var(--red);font-size:16px">'+cuotasVenc+'</div><div style="font-size:10px">Vencidas</div></div>'
     +'</div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
-    +'<div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#166534;font-weight:600;text-transform:uppercase">Total cobrado</div><div style="font-weight:800;color:#16a34a;font-size:15px">'+fmt(totalAbonado)+'</div></div>'
-    +'<div style="padding:10px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center"><div style="font-size:10px;color:#9a3412;font-weight:600;text-transform:uppercase">Multas cobradas</div><div style="font-weight:800;color:#ea580c;font-size:15px">'+(totalMultas>0?fmt(totalMultas):'—')+'</div></div>'
+    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">'
+    +'<div style="padding:8px;background:var(--blue3);border-radius:var(--radius-sm);text-align:center"><div style="font-size:9px;color:var(--blue);font-weight:600;text-transform:uppercase">Capital pendiente</div><div style="font-weight:800;color:var(--blue);font-size:12px">'+fmt(capitalPendiente)+'</div></div>'
+    +'<div style="padding:8px;background:var(--green2);border-radius:var(--radius-sm);text-align:center"><div style="font-size:9px;color:#166534;font-weight:600;text-transform:uppercase">Intereses cobrados</div><div style="font-weight:800;color:#16a34a;font-size:12px">'+fmt(interesesCobrados)+'</div></div>'
+    +'<div style="padding:8px;background:var(--amber2);border-radius:var(--radius-sm);text-align:center"><div style="font-size:9px;color:#92400e;font-weight:600;text-transform:uppercase">Int. especiales</div><div style="font-weight:800;color:var(--amber);font-size:12px">'+fmt(interesesEsp)+'</div></div>'
+    +'<div style="padding:8px;background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius-sm);text-align:center"><div style="font-size:9px;color:#9a3412;font-weight:600;text-transform:uppercase">Beneficio total</div><div style="font-weight:800;color:#ea580c;font-size:12px">'+fmt(beneficioTotal)+'</div></div>'
     +'</div>'
-    +'<div style="max-height:300px;overflow-y:auto"><table class="amort-table">'
-    +'<thead><tr><th>#</th><th>F.Cuota</th><th>Cuota</th><th>Abono</th><th>Multa</th><th>F.Pago</th><th>Estado</th>'+thAcc+'</tr></thead>'
-    +'<tbody>'+filasHTML+'</tbody></table></div>';
+    +'<div style="font-size:10px;font-weight:600;color:var(--gray);margin-bottom:3px">📋 Cuotas — Capital | Interés | Cuota | Ab.Capital | Ab.Interés | Multa | F.Pago | Estado</div>'
+    +'<div style="max-height:200px;overflow-y:auto;margin-bottom:8px"><table class="amort-table" style="font-size:10px">'
+    +'<thead><tr><th>#</th><th>F.Vence</th><th style="color:var(--gray)">Capital</th><th style="color:var(--blue)">Interés</th><th>Cuota</th><th style="color:var(--green)">Ab.Capital</th><th style="color:var(--blue)">Ab.Interés</th><th style="color:var(--red)">Multa</th><th>F.Pago</th><th>Estado</th>'+thAcc+'</tr></thead>'
+    +'<tbody>'+filasHTML+'</tbody></table></div>'
+    +'<div style="font-size:10px;font-weight:600;color:var(--gray);margin-bottom:3px">💵 Abonos a capital — Total: <span style="color:var(--blue)">'+fmt(abonosExtra)+'</span></div>'
+    +'<div style="max-height:80px;overflow-y:auto;margin-bottom:8px"><table class="amort-table" style="font-size:10px">'
+    +'<thead><tr><th>Fecha</th><th>Monto</th><th>Método</th><th>Notas</th></tr></thead>'
+    +'<tbody>'+abonosRows+'</tbody></table></div>'
+    +(intEspPrest.length?
+      '<div style="font-size:10px;font-weight:600;color:var(--gray);margin-bottom:3px">⚡ Cobros Solo Interés — Total: <span style="color:var(--amber)">'+fmt(interesesEsp+multasEsp)+'</span></div>'
+      +'<div style="max-height:80px;overflow-y:auto"><table class="amort-table" style="font-size:10px">'
+      +'<thead><tr><th>Fecha</th><th>Cuota#</th><th style="color:var(--amber)">Interés</th><th style="color:var(--red)">Multa</th><th>Total</th><th>Método</th><th>Cobrador</th></tr></thead>'
+      +'<tbody>'+intEspRows+'</tbody></table></div>':'');
+
   const modalFoot='<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>'
     +' <button class="btn btn-primary" onclick="closeModal();imprimirFactura(\''+id+'\')">Factura</button>'
     +' <button class="btn btn-amber" onclick="closeModal();imprimirPagare(\''+id+'\')">Pagare</button>'
     +(p.estado==='ACTIVO'&&isDueno()&&!isSoloLectura()?(' <button class="btn btn-red" onclick="cancelarPrestamo(\''+id+'\')">Cancelar</button>'):'');
-  openModal('Prestamo '+p.id+' - '+p.nombreCliente,modalBody,modalFoot);
+  openModal('Prestamo '+p.id+' — '+p.nombreCliente+' | '+(esIO?'Interest Only':'Capital+Interés'),modalBody,modalFoot);
 }
-
-// [editarPago duplicado eliminado]
-// -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
 function limpiarPago(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
   openModal('Revertir pago - Cuota #'+numCuota,`
@@ -1923,28 +1981,53 @@ function editarPagoGuardar(idPrestamo,numCuota){
   const cobrador=document.getElementById('ep-cobrador')?.value||currentUser.nombre;
   const metodo=document.getElementById('ep-metodo')?.value||'Cash';
   const notas=document.getElementById('ep-notas')?.value||'';
+
   if(estadoSel==='PENDIENTE'){
+    // Revertir todo — también restaurar capital/interes si es interest_only
     c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
-    c.cobrador=null;c.metodo=null;c.notas='';
-    // Eliminar registros de pagos en historial para esta cuota
+    c.cobrador=null;c.metodo=null;c.notas='';c.estado='PENDIENTE';
+    if(p.modalidad==='interest_only'){
+      const tasa=parseFloat(p.tasa||0)/100;
+      c.capital=parseFloat(p.capital||0);
+      c.interes=parseFloat((p.capital*tasa).toFixed(2));
+      c.amortizacion=parseFloat((c.capital+c.interes).toFixed(2));
+      c._capitalOriginal=null;c._abonoCapital=null;c._capitalReparado=null;
+    }
     DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
     sDB('pagos');
   } else {
-    c.abono=parseFloat(document.getElementById('ep-abono').value)||0;
-    c.fechaPago=document.getElementById('ep-fecha').value||null;
-    const nuevoCapital=parseFloat(document.getElementById('ep-capital')?.value||c.capital);
-    if(!c._capitalOriginal && nuevoCapital!==c.capital) c._capitalOriginal=c.capital;
-    c.capital=nuevoCapital;
-    c.interes=parseFloat(document.getElementById('ep-interes').value)||c.interes;
-    c.multa=parseFloat(document.getElementById('ep-multa').value)||0;
+    // Leer valores del formulario — usar parseFloat sin || para respetar 0
+    c.abono    = parseFloat(document.getElementById('ep-abono').value  ?? 0);
+    c.fechaPago= document.getElementById('ep-fecha').value || null;
+
+    // Capital: guardar el original si cambió (para auditoría)
+    const nuevoCapital = parseFloat(document.getElementById('ep-capital')?.value ?? c.capital);
+    if(!c._capitalOriginal && Math.abs(nuevoCapital - c.capital) > 0.001) c._capitalOriginal=c.capital;
+    c.capital = isNaN(nuevoCapital) ? c.capital : nuevoCapital;
+
+    // Interés: respetar 0 explícito — NO usar || que ignora cero
+    const interesInput = document.getElementById('ep-interes');
+    c.interes = interesInput ? parseFloat(interesInput.value ?? c.interes) : c.interes;
+    if(isNaN(c.interes)) c.interes=0;
+
+    // Multa: igual
+    const multaInput = document.getElementById('ep-multa');
+    c.multa = multaInput ? parseFloat(multaInput.value ?? 0) : 0;
+    if(isNaN(c.multa)) c.multa=0;
+
     c.cobrador=cobrador;
     c.metodo=metodo;
     c.notas=notas;
+
+    // Recalcular amortizacion siempre con capital e interes actualizados
     c.amortizacion=parseFloat((c.capital+c.interes).toFixed(2));
-    if(estadoSel==='PAGADO') c.estado='PAGADO';
-    else if(estadoSel==='PARCIAL') c.estado='PARCIAL';
-    else if(estadoSel==='VENCIDA') c._estadoForzado='VENCIDA';
-    // Actualizar registro en historial de pagos si existe
+
+    // Estado
+    if(estadoSel==='PAGADO')      { c.estado='PAGADO'; c._estadoForzado=null; }
+    else if(estadoSel==='PARCIAL'){ c.estado='PARCIAL'; c._estadoForzado=null; }
+    else if(estadoSel==='VENCIDA'){ c._estadoForzado='VENCIDA'; }
+
+    // Actualizar historial de pagos si existe
     const pgExist=DB.pagos.find(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota);
     if(pgExist){
       pgExist.monto=c.abono;pgExist.multa=c.multa;pgExist.fecha=c.fechaPago;
@@ -1952,12 +2035,14 @@ function editarPagoGuardar(idPrestamo,numCuota){
       sDB('pagos');
     }
   }
-  // Verificar si el préstamo quedó cancelado
+
+  // Verificar si el préstamo quedó cancelado o debe reactivarse
   const todasPag=p.cuotas.every(x=>calcEstadoCuota(x)==='PAGADO');
   if(todasPag) p.estado='CANCELADO';
   else if(p.estado==='CANCELADO') p.estado='ACTIVO';
+
   sDB('prestamos');
-  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | '+estadoSel+' | '+cobrador);
+  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | Capital:'+c.capital+' Interes:'+c.interes+' | '+estadoSel+' | '+cobrador);
   closeModal();toast('✅ Pago actualizado correctamente','success');
   verPrestamo(idPrestamo);
 }
@@ -2903,15 +2988,25 @@ function renderAbonos(){
       <div class="card" style="border-top:3px solid var(--green)">
         <div class="card-title"><span class="ico">📋</span>Historial de abonos</div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Fecha</th><th>Préstamo</th><th>Cliente</th><th>Monto</th><th>Método</th><th></th></tr></thead>
-          <tbody>${(DB.abonos||[]).slice().reverse().map(ab=>`<tr>
-            <td>${fmtDate(ab.fecha)}</td>
-            <td class="mono" style="font-weight:700">${escHtml(ab.idPrestamo)}</td>
-            <td>${escHtml(ab.nombreCliente)}</td>
-            <td style="font-weight:700;color:var(--blue)">${fmt(ab.monto)}</td>
-            <td><span class="badge badge-blue">${escHtml(ab.metodo||'Cash')}</span></td>
-            <td>${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="abEliminar('${ab.id}')">🗑</button>`:''}</td>
-          </tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--gray);padding:20px">Sin abonos registrados</td></tr>'}
+          <thead><tr><th>Fecha</th><th>Préstamo</th><th>Cliente</th><th>Monto</th><th>Capital antes→después</th><th>Método</th><th>Notas</th><th></th></tr></thead>
+          <tbody>${(DB.abonos||[]).slice().reverse().map(function(ab){
+            var pAb=DB.prestamos.find(function(x){return x.id===ab.idPrestamo;});
+            var abonosAnt=(DB.abonos||[]).filter(function(x){return x.idPrestamo===ab.idPrestamo&&x.fecha<ab.fecha;}).reduce(function(a,x){return a+(x.monto||0);},0);
+            var capitalAntes=pAb?Math.max(0,(pAb.capital||0)-abonosAnt):0;
+            var capitalDespues=Math.max(0,capitalAntes-(ab.monto||0));
+            var capHtml=capitalAntes>0?fmt(capitalAntes)+' &rarr; <strong style="color:var(--green)">'+fmt(capitalDespues)+'</strong>':'&mdash;';
+            var delBtn=can('usuarios')?'<button class="btn btn-red btn-sm" onclick="abEliminar(\''+ab.id+'\')">🗑</button>':'';
+            return '<tr>'
+              +'<td style="font-size:11px">'+fmtDate(ab.fecha)+'</td>'
+              +'<td class="mono" style="font-weight:700;color:var(--blue)">'+escHtml(ab.idPrestamo)+'</td>'
+              +'<td style="font-size:11px">'+escHtml(ab.nombreCliente)+'</td>'
+              +'<td style="font-weight:700;color:var(--blue)">'+fmt(ab.monto)+'</td>'
+              +'<td style="font-size:11px;color:var(--gray)">'+capHtml+'</td>'
+              +'<td><span class="badge badge-blue" style="font-size:9px">'+escHtml(ab.metodo||'Cash')+'</span></td>'
+              +'<td style="font-size:10px;color:var(--gray)">'+escHtml(ab.notas||'—')+'</td>'
+              +'<td>'+delBtn+'</td>'
+              +'</tr>';
+          }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--gray);padding:20px">Sin abonos registrados</td></tr>'}
           </tbody>
         </table></div>
       </div>
@@ -2940,11 +3035,25 @@ function abMostrarInfo(){
   const saldoCapital=p.capital-p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO').reduce((a,cu)=>a+cu.capital,0);
   const totalAbonado=p.cuotas.reduce((a,cu)=>a+cu.abono,0);
   const saldo=p.totalPagar-totalAbonado;
+  // Desglose: capital cobrado, intereses cobrados, abonos extra
+  const capitalCobradoAb=p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO').reduce((a,cu)=>a+(cu.capital||0),0);
+  const abonosExtraAb=(DB.abonos||[]).filter(a=>a.idPrestamo===id).reduce((a,x)=>a+(x.monto||0),0);
+  const capitalPendienteAb=Math.max(0,(p.capital||0)-capitalCobradoAb-abonosExtraAb);
+  const interesesCobradosAb=p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO').reduce((a,cu)=>a+(cu.interes||0),0);
+  const intEspAb=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===id).reduce((a,x)=>a+(x.interes||0),0);
   document.getElementById('ab-info').innerHTML=`
-    <div style="background:var(--gray2);padding:12px;border-radius:var(--radius-sm);font-size:12px;margin-top:8px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-      <div style="text-align:center"><div style="color:var(--gray);font-size:10px">Capital pendiente</div><div style="font-weight:700;color:var(--blue)">${fmt(saldoCapital)}</div></div>
-      <div style="text-align:center"><div style="color:var(--gray);font-size:10px">Cuotas pendientes</div><div style="font-weight:700;color:var(--amber)">${cuotasPendientes.length}</div></div>
-      <div style="text-align:center"><div style="color:var(--gray);font-size:10px">Saldo total</div><div style="font-weight:700;color:var(--red)">${fmt(saldo)}</div></div>
+    <div style="background:var(--gray2);padding:12px;border-radius:var(--radius-sm);font-size:12px;margin-top:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Capital original</div><div style="font-weight:700;color:var(--navy)">${fmt(p.capital||0)}</div></div>
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Abonos extra</div><div style="font-weight:700;color:var(--blue)">${fmt(abonosExtraAb)}</div></div>
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Capital pendiente</div><div style="font-weight:700;color:var(--red)">${fmt(capitalPendienteAb)}</div></div>
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Cuotas pendientes</div><div style="font-weight:700;color:var(--amber)">${cuotasPendientes.length}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Intereses cobrados</div><div style="font-weight:700;color:var(--green)">${fmt(interesesCobradosAb)}</div></div>
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Int. especiales</div><div style="font-weight:700;color:var(--amber)">${fmt(intEspAb)}</div></div>
+        <div style="text-align:center"><div style="color:var(--gray);font-size:9px;text-transform:uppercase">Beneficio total</div><div style="font-weight:700;color:var(--green)">${fmt(interesesCobradosAb+intEspAb)}</div></div>
+      </div>
     </div>`;
 }
 
