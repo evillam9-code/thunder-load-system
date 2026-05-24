@@ -1850,6 +1850,21 @@ function limpiarPagoConfirm(idPrestamo, numCuota){
   const c=p.cuotas.find(x=>x.num===numCuota);
   if(!c)return;
   c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+  c.cobrador=null;c.metodo=null;c.notas='';
+  // interest_only: restaurar capital e interes originales
+  if(p.modalidad==='interest_only'){
+    const tasa=parseFloat(p.tasa||0)/100;
+    const interesFijo=parseFloat((p.capital*tasa).toFixed(2));
+    const capitalOriginal=parseFloat(p.capital||0);
+    if(c.capital!==capitalOriginal||c._capitalOriginal||c._abonoCapital){
+      c.capital=capitalOriginal;
+      c.interes=interesFijo;
+      c.amortizacion=parseFloat((capitalOriginal+interesFijo).toFixed(2));
+      c._capitalOriginal=null;c._abonoCapital=null;
+      c._capitalReparado=null;c._capitalOriginalBug=null;
+    }
+  }
+  c.estado='PENDIENTE';
   DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
   sDB('prestamos');sDB('pagos');
   addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
@@ -1882,7 +1897,8 @@ function editarPago(idPrestamo,numCuota){
     +'<div><label class="form-label">Monto abonado ('+monedaP+')</label><input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
     +'<div><label class="form-label">Fecha de pago</label><input id="ep-fecha" type="date" class="form-input" value="'+(c.fechaPago||'')+'"></div>'
     +'</div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">'
+    +'<div><label class="form-label">Capital ('+monedaP+')</label><input id="ep-capital" type="number" class="form-input" value="'+(c.capital||0)+'" min="0" step="0.01" title="Capital original de la cuota"></div>'
     +'<div><label class="form-label">Interés cobrado ('+monedaP+')</label><input id="ep-interes" type="number" class="form-input" value="'+(c.interes||0)+'" min="0" step="0.01"></div>'
     +'<div><label class="form-label">Multa cobrada ('+monedaP+')</label><input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div>'
     +'</div>'
@@ -1916,6 +1932,9 @@ function editarPagoGuardar(idPrestamo,numCuota){
   } else {
     c.abono=parseFloat(document.getElementById('ep-abono').value)||0;
     c.fechaPago=document.getElementById('ep-fecha').value||null;
+    const nuevoCapital=parseFloat(document.getElementById('ep-capital')?.value||c.capital);
+    if(!c._capitalOriginal && nuevoCapital!==c.capital) c._capitalOriginal=c.capital;
+    c.capital=nuevoCapital;
     c.interes=parseFloat(document.getElementById('ep-interes').value)||c.interes;
     c.multa=parseFloat(document.getElementById('ep-multa').value)||0;
     c.cobrador=cobrador;
@@ -2091,7 +2110,6 @@ function renderPagos(){
           <td><div style="display:flex;gap:4px">
             ${!pg.tipo||pg.tipo!=='ABONO'?`<button class="btn btn-secondary btn-sm" onclick="imprimirRecibo('${pg.id}')">🖨️</button>`:''}
             ${pg.tipo==='INTERES_ESP'?`<button class="btn btn-secondary btn-sm" onclick="intEspEditar('${pg.id}')" title="Editar cobro especial">✏️</button>`:''}
-            ${!pg.tipo||pg.tipo!=='ABONO'?`<button class="btn btn-secondary btn-sm" onclick="imprimirRecibo('${pg.id}')">🖨️</button>`:''}
             ${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="${pg.tipo==='INTERES_ESP'?`intEspEliminar('${pg.id}')`:pg.tipo==='ABONO'?`abEliminar('${pg.id}')`: `pgEliminarPago('${pg.id}')`}">🗑</button>`:''}
           </div></td>
         </tr>`).join('')||'<tr><td colspan="10" style="text-align:center;color:var(--gray);padding:20px">Sin registros</td></tr>'}
@@ -5072,13 +5090,16 @@ function repararCuotasInterestOnly(){
   let reparadas=0;
   (DB.prestamos||[]).forEach(p=>{
     if(p.modalidad!=='interest_only')return;
-    // Calcular interés fijo original del préstamo
     const tasa=parseFloat(p.tasa||0)/100;
     const interesFijo=parseFloat((p.capital*tasa).toFixed(2));
+    const capitalOriginal=parseFloat(p.capital||0);
+
     p.cuotas.forEach((cu,idx)=>{
       const esUltima=(idx===p.cuotas.length-1);
-      // Cuota intermedia dañada: capital=0, interes=0, amortizacion=0, abono=0, estado=PAGADO
-      if(!esUltima && cu.capital===0 && cu.interes===0 && cu.amortizacion===0 && (cu.abono||0)===0 && cu.estado==='PAGADO'){
+
+      // ── Cuotas intermedias dañadas: zeroed out by bug ──────
+      if(!esUltima && cu.capital===0 && cu.interes===0 && cu.amortizacion===0
+         && (cu.abono||0)===0 && cu.estado==='PAGADO'){
         cu.interes=interesFijo;
         cu.amortizacion=interesFijo;
         cu.estado='PENDIENTE';
@@ -5086,8 +5107,26 @@ function repararCuotasInterestOnly(){
         cu.fechaPago=null;
         reparadas++;
       }
+
+      // ── Última cuota con capital reducido por bug ───────────
+      // El bug redujo el capital más allá del abono real hecho
+      if(esUltima && !cu._capitalReparado){
+        const capitalActual=parseFloat(cu.capital||0);
+        const abonoReal=parseFloat(cu.abono||0);
+        // reduccion esperada = solo el abono real; si hay más reducción = bug
+        const reduccionReal=capitalOriginal - capitalActual;
+        if(reduccionReal > abonoReal + 0.01){
+          cu._capitalOriginalBug=capitalActual; // auditoría
+          cu.capital=capitalOriginal;
+          cu.interes=interesFijo;
+          cu.amortizacion=parseFloat((capitalOriginal+interesFijo).toFixed(2));
+          cu._capitalReparado=true;
+          reparadas++;
+        }
+      }
     });
-    // Si el préstamo fue marcado CANCELADO por el bug, reactivarlo
+
+    // Reactivar préstamo si fue marcado CANCELADO por bug
     const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
     if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
       p.estado='ACTIVO';
@@ -5096,7 +5135,7 @@ function repararCuotasInterestOnly(){
   });
   if(reparadas>0){
     sDB('prestamos');
-    console.log('Thunder Load: '+reparadas+' cuotas/préstamos reparados automáticamente');
+    console.log('Thunder Load: '+reparadas+' cuotas/préstamos reparados');
     addLog('CONFIG','Reparación automática: '+reparadas+' cuotas interest_only restauradas');
   }
 }
