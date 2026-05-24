@@ -1095,10 +1095,13 @@ function calcAmortizacion(capital, tasaMonthly, numCuotas, fechaInicio, formaPag
 }
 
 function calcEstadoCuota(cuota){
-  // Si la cuota fue marcada explícitamente como PAGADO (por pago normal o limpiarPago)
-  if(cuota.estado==='PAGADO') return 'PAGADO';
-  // Protección: amortizacion=0 no significa PAGADO a menos que haya un abono real
-  if(cuota.amortizacion>0 && cuota.abono>=cuota.amortizacion) return 'PAGADO';
+  // PAGADO solo si fue marcado explícitamente por el sistema tras verificar el pago
+  // NO confiar solo en estado='PAGADO' — verificar también que el abono cubre la amortizacion
+  if(cuota.estado==='PAGADO' && cuota.amortizacion>0 && cuota.abono>=cuota.amortizacion) return 'PAGADO';
+  if(cuota.estado==='PAGADO' && (cuota.amortizacion||0)===0) return 'PAGADO'; // cuota sin capital (edge case)
+  // Proteccion: amortizacion>0 Y abono cubre
+  if(cuota.amortizacion>0 && cuota.abono>0 && cuota.abono>=cuota.amortizacion) return 'PAGADO';
+  if((cuota.abono||0)>0) return 'PARCIAL';
   if(cuota.estado==='PARCIAL') return 'PARCIAL';
   if(cuota.fechaCuota<today()) return 'VENCIDA';
   return 'PENDIENTE';
@@ -1923,7 +1926,8 @@ function limpiarPagoConfirm(idPrestamo, numCuota){
     }
   }
   c.estado='PENDIENTE';
-  DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
+  // Conservar INTERES_ESP — solo borrar pagos normales de esta cuota
+  DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota&&x.tipo!=='INTERES_ESP'));
   sDB('prestamos');sDB('pagos');
   addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
   closeModal();toast('Cuota revertida a PENDIENTE','success');
@@ -2054,17 +2058,7 @@ function limpiarPago(idPrestamo,numCuota){
     +' <button class="btn btn-red" onclick="limpiarPagoConfirm(&quot;'+_lpId+'&quot;,'+_lpNum+')">Revertir</button>';
   openModal('Revertir pago - Cuota #'+numCuota,body,foot);
 }
-function limpiarPagoConfirm(idPrestamo,numCuota){
-  if(!isAdmin()&&!canDelete('prestamos')){toast('Sin permiso','error');return;}
-  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
-  const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
-  c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
-  DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
-  sDB('prestamos');sDB('pagos');
-  addLog('PAGO','Pago revertido - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
-  closeModal();toast('Cuota revertida a PENDIENTE','success');
-  verPrestamo(idPrestamo);
-}
+// [limpiarPagoConfirm duplicada eliminada]
 
 function prEliminar(id){
   const p=DB.prestamos.find(x=>x.id===id);
@@ -2338,7 +2332,7 @@ function pgMostrarCuotas(){
           <td style="white-space:nowrap">
             ${est!=='PAGADO'?`
               <button class="btn btn-green btn-sm" onclick="pgRegistrarPago('${id}',${cu.num})" title="Registrar pago completo">💳 Pagar</button>
-              ${(est==='VENCIDA'||est==='PENDIENTE'||est==='PARCIAL')?`<button class="btn btn-sm" style="background:var(--amber);color:white;margin-left:4px" onclick="intEspModal('${id}',${cu.num})" title="Cobrar solo interés y extender cuota">💰 Solo Interés</button>`:''}
+              ${(est==='VENCIDA'||est==='PENDIENTE'||est==='PARCIAL')&&(p.modalidad!=='interest_only'||(p.modalidad==='interest_only'&&cu.num===p.cuotas.length))?`<button class="btn btn-sm" style="background:var(--amber);color:white;margin-left:4px" onclick="intEspModal('${id}',${cu.num})" title="Cobrar solo interés y extender cuota">💰 Solo Interés</button>`:''}
             `:'<span style="color:var(--green);font-size:18px">✅</span>'}
           </td>
         </tr>`;}).join('')}
@@ -2380,7 +2374,16 @@ function pgRegistrarPago(idPrestamo,numCuota){
     situacionHtml=`<div style="margin-top:8px;padding:8px;background:var(--green2);border-radius:var(--radius-sm);color:var(--green);font-weight:600;font-size:12px">⏰ Faltan ${diasFaltan} días — Interés proporcional: ${fmtP(interesProp)}</div>`;
   }
 
+  // Aviso intereses especiales ya cobrados en esta cuota
+  const intEspCuota=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota);
+  const totalIntEspCuota=intEspCuota.reduce((a,x)=>a+(x.interes||0)+(x.multa||0),0);
+  const avisoIntEsp=intEspCuota.length?`<div style="padding:8px;background:var(--amber2);border:1.5px solid var(--amber);border-radius:var(--radius-sm);font-size:12px;margin-bottom:10px">
+    ⚡ <strong>Ya se cobró interés especial en esta cuota:</strong> ${fmtP(totalIntEspCuota)}
+    (${intEspCuota.length} cobro${intEspCuota.length>1?'s':''} — ${intEspCuota.map(x=>fmtDate(x.fecha)).join(', ')})
+    <br><span style="color:var(--gray)">Este monto ya está sumado en los beneficios.</span>
+  </div>`:'';
   openModal(`💳 Registrar pago — Cuota #${numCuota} de ${idPrestamo}`,`
+    ${avisoIntEsp}
     <div style="background:var(--gray2);padding:12px;border-radius:var(--radius-sm);margin-bottom:14px;font-size:13px">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
         <div><strong>Préstamo:</strong> <span class="mono" style="color:var(--blue)">${idPrestamo}</span></div>
@@ -2525,10 +2528,16 @@ function pgConfirmarPagoMonto(idPrestamo,numCuota,monto,multa,fecha,metodo,cobra
   const p=DB.prestamos.find(x=>x.id===idPrestamo);
   const cuota=p.cuotas.find(x=>x.num===numCuota);
   const monedaP=p.moneda||'RD$';
-  // Ajustar el interés cobrado de esta cuota al proporcional calculado
-  const interesCobrado=parseFloat(interesProp||cuota.interes);
-  cuota.interes=interesCobrado;
-  cuota.amortizacion=parseFloat((cuota.capital+interesCobrado).toFixed(2));
+  // interest_only: interés siempre fijo — NO tocar
+  // capital_interes: ajustar al proporcional si es anticipado
+  const interesOriginal=cuota.interes;
+  const interesCobrado=p.modalidad==='interest_only'
+    ? interesOriginal
+    : parseFloat(interesProp||cuota.interes);
+  if(p.modalidad!=='interest_only'){
+    cuota.interes=interesCobrado;
+    cuota.amortizacion=parseFloat((cuota.capital+interesCobrado).toFixed(2));
+  }
 
   // Acumular abono — cada pago se registra por separado en historial
   cuota.abono=parseFloat(((cuota.abono||0)+parseFloat(monto)).toFixed(2));
@@ -5132,6 +5141,7 @@ window.fbIniciar = async function(){
       if(typeof applyEstilos==='function') applyEstilos();
       // Reparar cuotas dañadas por bug anterior
       setTimeout(repararCuotasInterestOnly,500);
+      setTimeout(repararCuotasMalMarcadas,800);
       // Proteger sesión activa
       if(currentUser){
         const userActualizado = DB.users.find(u=>u.id===currentUser.id);
@@ -5217,15 +5227,18 @@ function repararCuotasInterestOnly(){
         reparadas++;
       }
 
-      // ── Última cuota con capital reducido por bug ───────────
-      // El bug redujo el capital más allá del abono real hecho
+      // ── Última cuota con capital o interés dañados por bug ──
       if(esUltima && !cu._capitalReparado){
         const capitalActual=parseFloat(cu.capital||0);
+        const interesActual=parseFloat(cu.interes||0);
         const abonoReal=parseFloat(cu.abono||0);
-        // reduccion esperada = solo el abono real; si hay más reducción = bug
-        const reduccionReal=capitalOriginal - capitalActual;
-        if(reduccionReal > abonoReal + 0.01){
-          cu._capitalOriginalBug=capitalActual; // auditoría
+        const reduccionReal=capitalOriginal-capitalActual;
+        const interesIncorrecto=Math.abs(interesActual-interesFijo)>0.01;
+        const capitalReducidoDemas=reduccionReal>abonoReal+0.01;
+        // Restaurar si capital fue reducido más de lo abonado O interés fue modificado
+        if(capitalReducidoDemas||interesIncorrecto){
+          cu._capitalOriginalBug=capitalActual;
+          cu._interesOriginalBug=interesActual;
           cu.capital=capitalOriginal;
           cu.interes=interesFijo;
           cu.amortizacion=parseFloat((capitalOriginal+interesFijo).toFixed(2));
@@ -5246,6 +5259,43 @@ function repararCuotasInterestOnly(){
     sDB('prestamos');
     console.log('Thunder Load: '+reparadas+' cuotas/préstamos reparados');
     addLog('CONFIG','Reparación automática: '+reparadas+' cuotas interest_only restauradas');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// REPARACIÓN: Cuotas marcadas PAGADO pero con abono < amortizacion
+// Aplica a todos los préstamos (capital_interes e interest_only)
+// ══════════════════════════════════════════════════════════════
+function repararCuotasMalMarcadas(){
+  let reparadas=0;
+  (DB.prestamos||[]).forEach(p=>{
+    p.cuotas.forEach(cu=>{
+      const abonoReal=parseFloat(cu.abono||0);
+      const amort=parseFloat(cu.amortizacion||0);
+      // Si está PAGADO pero el abono no cubre la amortizacion → corregir a PARCIAL
+      if(cu.estado==='PAGADO' && amort>0 && abonoReal>0 && abonoReal<amort-0.01){
+        cu.estado='PARCIAL';
+        reparadas++;
+        console.log('Reparada cuota '+cu.num+' de '+p.id+': PAGADO→PARCIAL (abono='+abonoReal+' < amort='+amort+')');
+      }
+      // Si está PAGADO pero abono=0 y amortizacion>0 → corregir a PENDIENTE/VENCIDA
+      if(cu.estado==='PAGADO' && amort>0 && abonoReal===0){
+        cu.estado='PENDIENTE';
+        cu.fechaPago=null;
+        reparadas++;
+      }
+    });
+    // Reactivar préstamo si fue mal marcado como CANCELADO
+    const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
+    if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
+      p.estado='ACTIVO';
+      reparadas++;
+    }
+  });
+  if(reparadas>0){
+    sDB('prestamos');
+    console.log('Thunder Load: '+reparadas+' cuotas mal marcadas corregidas');
+    addLog('CONFIG','Reparación: '+reparadas+' cuotas con estado incorrecto corregidas');
   }
 }
 
