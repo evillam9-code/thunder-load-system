@@ -476,6 +476,7 @@ let DB = {
   prestamos:   ls('prestamos')    || [],
   pagos:       ls('pagos')        || [],
   abonos:      ls('abonos')       || [],
+  interesesEsp:ls('interesesEsp') || [],
   gastos:      ls('gastos')       || [],
   nomina_emp:  ls('nomina_emp')   || [],
   nomina_pagos:ls('nomina_pagos') || [],
@@ -723,6 +724,7 @@ function _ejecutarLogin(user){
   window._fbResuelto=false; // Se activa tras fbIniciar
   window._fbActivo=false;   // Se activa si Firebase conecta
   addLog('LOGIN','Inicio de sesión exitoso');
+  if(typeof window._resetInactividad==='function') window._resetInactividad();
   document.getElementById('login-error').style.display='none';
   document.getElementById('login-screen').style.display='none';
   document.getElementById('top-username').textContent=user.nombre;
@@ -1093,10 +1095,13 @@ function calcAmortizacion(capital, tasaMonthly, numCuotas, fechaInicio, formaPag
 }
 
 function calcEstadoCuota(cuota){
-  if(cuota.abono>=cuota.amortizacion)return'PAGADO';
-  if(cuota.estado==='PARCIAL')return'PARCIAL';
-  if(cuota.fechaCuota<today())return'VENCIDA';
-  return'PENDIENTE';
+  // Si la cuota fue marcada explícitamente como PAGADO (por pago normal o limpiarPago)
+  if(cuota.estado==='PAGADO') return 'PAGADO';
+  // Protección: amortizacion=0 no significa PAGADO a menos que haya un abono real
+  if(cuota.amortizacion>0 && cuota.abono>=cuota.amortizacion) return 'PAGADO';
+  if(cuota.estado==='PARCIAL') return 'PARCIAL';
+  if(cuota.fechaCuota<today()) return 'VENCIDA';
+  return 'PENDIENTE';
 }
 
 function calcDiasMora(fechaCuota){
@@ -1160,22 +1165,28 @@ function renderDashboard(){
   const totalCobrado=pagosFiltrados.reduce((a,pg)=>a+pg.monto,0);
   const beneficios=pagosFiltrados.reduce((a,pg)=>a+pg.multa,0)+totalInteres;
   // Intereses realmente cobrados en el período (de los pagos)
-  const interesesCobrados=pagosFiltrados.reduce((a,pg)=>{
-    // Buscar la cuota correspondiente para saber su interés
+  // Intereses de pagos normales
+  const interesesCobradosNorm=pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>{
     const prest=DB.prestamos.find(x=>x.id===pg.idPrestamo);
     if(!prest)return a;
     const cuota=prest.cuotas.find(x=>x.num===pg.numCuota);
     return a+(cuota?cuota.interes:0);
   },0);
-  // Multas cobradas en el período (ganancia extra)
-  const multasCobradas=pagosFiltrados.reduce((a,pg)=>a+parseFloat(pg.multa||0),0);
-  // Capital cobrado en el período (abonos a capital de los pagos)
-  const capitalCobrado=pagosFiltrados.reduce((a,pg)=>a+parseFloat(pg.monto||0),0)-interesesCobrados;
+  // Intereses especiales cobrados en el período
+  let intEspFiltrados=(DB.interesesEsp||[]).filter(x=>enPeriodo(x.fecha));
+  if(dashCliente) intEspFiltrados=intEspFiltrados.filter(x=>x.idCliente===dashCliente);
+  const interesesEspCobrados=intEspFiltrados.reduce((a,x)=>a+(x.interes||0),0);
+  const multasEspCobradas=intEspFiltrados.reduce((a,x)=>a+(x.multa||0),0);
+  const interesesCobrados=parseFloat((interesesCobradosNorm+interesesEspCobrados).toFixed(2));
+  // Multas cobradas en el período (pagos normales + especiales)
+  const multasCobradas=parseFloat((pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>a+parseFloat(pg.multa||0),0)+multasEspCobradas).toFixed(2));
+  // Capital cobrado en el período
+  const capitalCobrado=parseFloat((pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>a+parseFloat(pg.monto||0),0)-interesesCobradosNorm).toFixed(2));
   // Gastos del período
   const gastosPeriodo=(DB.gastos||[]).filter(g=>enPeriodo(g.fecha)).reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nominaPeriodo=(DB.nomina_pagos||[]).filter(n=>enPeriodo(n.fecha)).reduce((a,n)=>a+parseFloat(n.salario||0),0);
-  // Beneficio neto = Intereses cobrados + Multas cobradas
-  const beneficioNeto=interesesCobrados+multasCobradas;
+  // Beneficio neto = Intereses cobrados (normales + especiales) + Multas cobradas
+  const beneficioNeto=parseFloat((interesesCobrados+multasCobradas).toFixed(2));
 
   const cuotasVencidas=[];
   DB.prestamos.filter(p=>p.estado==='ACTIVO').forEach(p=>{
@@ -1222,9 +1233,10 @@ function renderDashboard(){
       <div class="stat-card red"><div class="stat-ico">⚠️</div><div class="stat-label">Monto vencido</div><div class="stat-value" style="font-size:16px">${fmt(montoVencido)}</div><div class="stat-sub">${cuotasVencidas.length} cuotas en mora</div></div>
     </div>
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-card amber"><div class="stat-ico">📈</div><div class="stat-label">Intereses cobrados</div><div class="stat-value" style="font-size:16px">${fmt(interesesCobrados)}</div><div class="stat-sub">${dashCliente?'Cliente seleccionado':'Período seleccionado'}</div></div>
-      <div class="stat-card" style="border-top:3px solid #f97316;border-top-color:#f97316;background:linear-gradient(135deg,#fff7ed 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">⚡</div><div class="stat-label" style="color:#ea580c">Multas cobradas <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">+ Ganancia extra</span></div><div class="stat-value" style="font-size:16px;color:#ea580c">+${fmt(multasCobradas)}</div><div class="stat-sub">Beneficio adicional por mora</div></div>
-      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub">Intereses + Multas cobradas</div></div>
+      <div class="stat-card amber"><div class="stat-ico">📈</div><div class="stat-label">Intereses normales</div><div class="stat-value" style="font-size:16px">${fmt(interesesCobradosNorm)}</div><div class="stat-sub">${pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').length} pagos del período</div></div>
+      <div class="stat-card" style="border-top:3px solid #f59e0b;background:linear-gradient(135deg,#fffbeb 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">⚡</div><div class="stat-label" style="color:#d97706">Intereses especiales<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">Solo Interés</span></div><div class="stat-value" style="font-size:16px;color:#d97706">${fmt(interesesEspCobrados)}</div><div class="stat-sub">${intEspFiltrados.length} cobro${intEspFiltrados.length!==1?'s':''} especial${intEspFiltrados.length!==1?'es':''}</div></div>
+      <div class="stat-card" style="border-top:3px solid #f97316;background:linear-gradient(135deg,#fff7ed 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">🚨</div><div class="stat-label" style="color:#ea580c">Multas cobradas<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">+ Ganancia mora</span></div><div class="stat-value" style="font-size:16px;color:#ea580c">+${fmt(multasCobradas)}</div><div class="stat-sub">Normales + especiales</div></div>
+      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto total</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub" style="font-size:10px">${fmt(interesesCobradosNorm)} norm. + ${fmt(interesesEspCobrados)} esp. + ${fmt(multasCobradas)} multas</div></div>
     </div>
     <div class="two-col">
       <div class="card">
@@ -1821,61 +1833,7 @@ function verPrestamo(id){
   openModal('Prestamo '+p.id+' - '+p.nombreCliente,modalBody,modalFoot);
 }
 
-function editarPago(idPrestamo, numCuota){
-  if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
-  const p=DB.prestamos.find(x=>x.id===idPrestamo);
-  if(!p)return;
-  const c=p.cuotas.find(x=>x.num===numCuota);
-  if(!c)return;
-  const est=calcEstadoCuota(c);
-  openModal('Editar pago - Cuota #'+numCuota,`
-    <div style="display:grid;gap:12px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><label class="form-label">Monto abonado</label>
-          <input id="ep-abono" type="number" class="form-input" value="${c.abono||0}" min="0" step="0.01"></div>
-        <div><label class="form-label">Fecha de pago</label>
-          <input id="ep-fecha" type="date" class="form-input" value="${c.fechaPago||''}"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><label class="form-label">Mora (RD$)</label>
-          <input id="ep-mora" type="number" class="form-input" value="${c.mora||0}" min="0" step="0.01"></div>
-        <div><label class="form-label">Multa (RD$)</label>
-          <input id="ep-multa" type="number" class="form-input" value="${c.multa||0}" min="0" step="0.01"></div>
-      </div>
-      <div><label class="form-label">Estado</label>
-        <select id="ep-estado" class="form-input">
-          <option value="PENDIENTE" ${est==='PENDIENTE'?'selected':''}>PENDIENTE</option>
-          <option value="PAGADO" ${est==='PAGADO'?'selected':''}>PAGADO</option>
-          <option value="VENCIDA" ${est==='VENCIDA'?'selected':''}>VENCIDA</option>
-        </select>
-      </div>
-      <div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>
-    </div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-     <button class="btn btn-primary" onclick="editarPagoGuardar('${idPrestamo}',${numCuota})">Guardar cambios</button>`);
-}
-function editarPagoGuardar(idPrestamo, numCuota){
-  if(!isAdmin()&&!canEdit('prestamos')){toast('No tiene permiso para editar pagos','error');return;}
-  const p=DB.prestamos.find(x=>x.id===idPrestamo);
-  if(!p)return;
-  const c=p.cuotas.find(x=>x.num===numCuota);
-  if(!c)return;
-  const abono=parseFloat(document.getElementById('ep-abono').value)||0;
-  const fecha=document.getElementById('ep-fecha').value||null;
-  const mora=parseFloat(document.getElementById('ep-mora').value)||0;
-  const multa=parseFloat(document.getElementById('ep-multa').value)||0;
-  const estadoSel=document.getElementById('ep-estado').value;
-  if(estadoSel==='PENDIENTE'){
-    c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
-  } else {
-    c.abono=abono;c.fechaPago=fecha;c.mora=mora;c.multa=multa;
-    c._estadoForzado=(estadoSel==='VENCIDA')?'VENCIDA':null;
-  }
-  sDB('prestamos');
-  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
-  closeModal();toast('Pago actualizado','success');
-  verPrestamo(idPrestamo);
-}
+// [editarPago duplicado eliminado]
 // -- LIMPIAR PAGO (admin o permiso borrar prestamos) --
 function limpiarPago(idPrestamo, numCuota){
   if(!isAdmin()&&!canDelete('prestamos')){toast('No tiene permiso para revertir pagos','error');return;}
@@ -1905,43 +1863,83 @@ function editarPago(idPrestamo,numCuota){
   const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
   const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
   const est=calcEstadoCuota(c);
+  const monedaP=p.moneda||'RD$';
+  // Intereses especiales ya cobrados para esta cuota
+  const intEsp=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota);
+  const totalIntEsp=intEsp.reduce((a,x)=>a+(x.interes||0),0);
+  const totalMultEsp=intEsp.reduce((a,x)=>a+(x.multa||0),0);
+  const intEspHtml=intEsp.length?`<div style="padding:8px;background:var(--amber2);border-radius:var(--radius-sm);font-size:12px;margin-bottom:4px">
+    ⚡ Intereses especiales cobrados: <strong>${monedaP} ${totalIntEsp.toFixed(2)}</strong> | Multas: <strong>${monedaP} ${totalMultEsp.toFixed(2)}</strong>
+    (${intEsp.length} cobro${intEsp.length>1?'s':''})</div>`:'';
+  const usuariosOpts=DB.users.filter(u=>u.activo).map(u=>`<option value="${u.nombre}" ${(c.cobrador||'')===(u.nombre)?'selected':''}>${escHtml(u.nombre)}</option>`).join('');
   const selOpts='<option value="PENDIENTE"'+(est==='PENDIENTE'?' selected':'')+'>PENDIENTE</option>'
     +'<option value="PAGADO"'+(est==='PAGADO'?' selected':'')+'>PAGADO</option>'
+    +'<option value="PARCIAL"'+(est==='PARCIAL'?' selected':'')+'>PARCIAL</option>'
     +'<option value="VENCIDA"'+(est==='VENCIDA'?' selected':'')+'>VENCIDA</option>';
-  const body='<div style="display:grid;gap:12px">'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-    +'<div><label class="form-label">Monto abonado</label><input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
+  const body=intEspHtml
+    +'<div style="display:grid;gap:10px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    +'<div><label class="form-label">Monto abonado ('+monedaP+')</label><input id="ep-abono" type="number" class="form-input" value="'+(c.abono||0)+'" min="0" step="0.01"></div>'
     +'<div><label class="form-label">Fecha de pago</label><input id="ep-fecha" type="date" class="form-input" value="'+(c.fechaPago||'')+'"></div>'
     +'</div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-    +'<div><label class="form-label">Mora (RD$)</label><input id="ep-mora" type="number" class="form-input" value="'+(c.mora||0)+'" min="0" step="0.01"></div>'
-    +'<div><label class="form-label">Multa (RD$)</label><input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    +'<div><label class="form-label">Interés cobrado ('+monedaP+')</label><input id="ep-interes" type="number" class="form-input" value="'+(c.interes||0)+'" min="0" step="0.01"></div>'
+    +'<div><label class="form-label">Multa cobrada ('+monedaP+')</label><input id="ep-multa" type="number" class="form-input" value="'+(c.multa||0)+'" min="0" step="0.01"></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    +'<div><label class="form-label">Método de pago</label><select id="ep-metodo" class="form-input"><option '+(c.metodo==='Cash'?'selected':'')+'>Cash</option><option '+(c.metodo==='Zeller'?'selected':'')+'>Zeller</option><option '+(c.metodo==='Transfer'?'selected':'')+'>Transfer</option><option '+(c.metodo==='Deposit'?'selected':'')+'>Deposit</option><option '+(c.metodo==='Check'?'selected':'')+'>Check</option><option '+(c.metodo==='Tarjeta'?'selected':'')+'>Tarjeta</option></select></div>'
+    +'<div><label class="form-label">Recibido por</label><select id="ep-cobrador" class="form-input">'+usuariosOpts+'</select></div>'
     +'</div>'
     +'<div><label class="form-label">Estado</label><select id="ep-estado" class="form-input">'+selOpts+'</select></div>'
-    +'<div style="font-size:12px;color:var(--gray)">Cambios quedan registrados en bitacora.</div>'
+    +'<div><label class="form-label">Notas</label><input id="ep-notas" type="text" class="form-input" value="'+escHtml(c.notas||'')+'" placeholder="Observaciones..."></div>'
+    +'<div style="font-size:11px;color:var(--gray)">📋 Cambios quedan registrados en bitácora.</div>'
     +'</div>';
   const _epId=String(idPrestamo);const _epNum=parseInt(numCuota);
   const foot='<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>'
-    +' <button class="btn btn-primary" onclick="editarPagoGuardar(&quot;'+_epId+'&quot;,'+_epNum+')">Guardar cambios</button>';
-  openModal('Editar pago - Cuota #'+numCuota,body,foot);
+    +' <button class="btn btn-primary" onclick="editarPagoGuardar(&quot;'+_epId+'&quot;,'+_epNum+')">💾 Guardar cambios</button>';
+  openModal('✏️ Editar pago — Cuota #'+numCuota+' | '+escHtml(p.nombreCliente),body,foot);
 }
 function editarPagoGuardar(idPrestamo,numCuota){
   if(!isAdmin()&&!canEdit('prestamos')){toast('Sin permiso','error');return;}
   const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
   const c=p.cuotas.find(x=>x.num===numCuota);if(!c)return;
   const estadoSel=document.getElementById('ep-estado').value;
+  const cobrador=document.getElementById('ep-cobrador')?.value||currentUser.nombre;
+  const metodo=document.getElementById('ep-metodo')?.value||'Cash';
+  const notas=document.getElementById('ep-notas')?.value||'';
   if(estadoSel==='PENDIENTE'){
     c.abono=0;c.fechaPago=null;c.mora=0;c.multa=0;c._estadoForzado=null;
+    c.cobrador=null;c.metodo=null;c.notas='';
+    // Eliminar registros de pagos en historial para esta cuota
+    DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.numCuota===numCuota));
+    sDB('pagos');
   } else {
     c.abono=parseFloat(document.getElementById('ep-abono').value)||0;
     c.fechaPago=document.getElementById('ep-fecha').value||null;
-    c.mora=parseFloat(document.getElementById('ep-mora').value)||0;
+    c.interes=parseFloat(document.getElementById('ep-interes').value)||c.interes;
     c.multa=parseFloat(document.getElementById('ep-multa').value)||0;
-    c._estadoForzado=(estadoSel==='VENCIDA')?'VENCIDA':null;
+    c.cobrador=cobrador;
+    c.metodo=metodo;
+    c.notas=notas;
+    c.amortizacion=parseFloat((c.capital+c.interes).toFixed(2));
+    if(estadoSel==='PAGADO') c.estado='PAGADO';
+    else if(estadoSel==='PARCIAL') c.estado='PARCIAL';
+    else if(estadoSel==='VENCIDA') c._estadoForzado='VENCIDA';
+    // Actualizar registro en historial de pagos si existe
+    const pgExist=DB.pagos.find(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota);
+    if(pgExist){
+      pgExist.monto=c.abono;pgExist.multa=c.multa;pgExist.fecha=c.fechaPago;
+      pgExist.metodo=metodo;pgExist.cobrador=cobrador;pgExist.notas=notas;
+      sDB('pagos');
+    }
   }
+  // Verificar si el préstamo quedó cancelado
+  const todasPag=p.cuotas.every(x=>calcEstadoCuota(x)==='PAGADO');
+  if(todasPag) p.estado='CANCELADO';
+  else if(p.estado==='CANCELADO') p.estado='ACTIVO';
   sDB('prestamos');
-  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota);
-  closeModal();toast('Pago actualizado','success');
+  addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | '+estadoSel+' | '+cobrador);
+  closeModal();toast('✅ Pago actualizado correctamente','success');
   verPrestamo(idPrestamo);
 }
 function limpiarPago(idPrestamo,numCuota){
@@ -2080,9 +2078,9 @@ function renderPagos(){
       <div style="margin-bottom:12px"><input class="search-input" placeholder="Buscar..." oninput="filterTable('pg-tbl',this.value)"></div>
       <div class="table-wrap"><table id="pg-tbl">
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Préstamo</th><th>Cliente</th><th>Cuota #</th><th>F.Vencimiento</th><th>Monto</th><th>Multa</th><th>Método</th><th></th></tr></thead>
-        <tbody>${[...DB.pagos,...(DB.abonos||[]).map(a=>({...a,tipo:'ABONO',numCuota:'—',fechaVencimiento:'—',multa:0}))].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(pg=>`<tr>
+        <tbody>${[...DB.pagos,...(DB.abonos||[]).map(a=>({...a,tipo:'ABONO',numCuota:'—',fechaVencimiento:'—',multa:0}))].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(pg=>`<tr style="${pg.tipo==='INTERES_ESP'?'background:var(--amber2)':''}">
           <td>${fmtDate(pg.fecha)}</td>
-          <td><span class="badge ${pg.tipo==='ABONO'?'badge-purple':'badge-blue'}">${pg.tipo==='ABONO'?'💵 Abono':'💳 Cuota'}</span></td>
+          <td><span class="badge ${pg.tipo==='INTERES_ESP'?'badge-amber':pg.tipo==='ABONO'?'badge-purple':'badge-blue'}">${pg.tipo==='INTERES_ESP'?'💰 Interés Esp.':pg.tipo==='ABONO'?'💵 Abono':'💳 Cuota'}</span></td>
           <td class="mono" style="font-weight:700">${escHtml(pg.idPrestamo)}</td>
           <td>${escHtml(pg.nombreCliente||'—')}</td>
           <td style="text-align:center">${pg.numCuota||'—'}</td>
@@ -2092,7 +2090,9 @@ function renderPagos(){
           <td><span class="badge badge-blue">${escHtml(pg.metodo||'Cash')}</span></td>
           <td><div style="display:flex;gap:4px">
             ${!pg.tipo||pg.tipo!=='ABONO'?`<button class="btn btn-secondary btn-sm" onclick="imprimirRecibo('${pg.id}')">🖨️</button>`:''}
-            ${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="${pg.tipo==='ABONO'?`abEliminar('${pg.id}')`:`pgEliminarPago('${pg.id}')`}">🗑</button>`:''}
+            ${pg.tipo==='INTERES_ESP'?`<button class="btn btn-secondary btn-sm" onclick="intEspEditar('${pg.id}')" title="Editar cobro especial">✏️</button>`:''}
+            ${!pg.tipo||pg.tipo!=='ABONO'?`<button class="btn btn-secondary btn-sm" onclick="imprimirRecibo('${pg.id}')">🖨️</button>`:''}
+            ${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="${pg.tipo==='INTERES_ESP'?`intEspEliminar('${pg.id}')`:pg.tipo==='ABONO'?`abEliminar('${pg.id}')`: `pgEliminarPago('${pg.id}')`}">🗑</button>`:''}
           </div></td>
         </tr>`).join('')||'<tr><td colspan="10" style="text-align:center;color:var(--gray);padding:20px">Sin registros</td></tr>'}
         </tbody>
@@ -2232,7 +2232,12 @@ function pgMostrarCuotas(){
           <td style="color:var(--red)">${cu.multa>0?('<span style="font-weight:600;color:var(--green)">'+fmt(cu.multa)+' &#x2714;</span>'):multa>0?('<span style="color:var(--red)">'+fmt(multa)+'</span>'):'—'}</td>
           <td style="font-size:11px;color:var(--gray)">${fmtDate(cu.fechaPago)}</td>
           <td><span class="badge ${bc[est]||'badge-gray'}">${est}</span></td>
-          <td>${est!=='PAGADO'?`<button class="btn btn-green btn-sm" onclick="pgRegistrarPago('${id}',${cu.num})">💳 Pagar</button>`:'<span style="color:var(--green);font-size:18px">✅</span>'}</td>
+          <td style="white-space:nowrap">
+            ${est!=='PAGADO'?`
+              <button class="btn btn-green btn-sm" onclick="pgRegistrarPago('${id}',${cu.num})" title="Registrar pago completo">💳 Pagar</button>
+              ${(est==='VENCIDA'||est==='PENDIENTE'||est==='PARCIAL')?`<button class="btn btn-sm" style="background:var(--amber);color:white;margin-left:4px" onclick="intEspModal('${id}',${cu.num})" title="Cobrar solo interés y extender cuota">💰 Solo Interés</button>`:''}
+            `:'<span style="color:var(--green);font-size:18px">✅</span>'}
+          </td>
         </tr>`;}).join('')}
       </tbody>
     </table></div>`:'<p style="color:var(--gray);font-size:13px">Sin cuotas</p>';
@@ -2925,6 +2930,244 @@ function abMostrarInfo(){
     </div>`;
 }
 
+// ══════════════════════════════════════════════════════════════
+// COBRO DE INTERÉS ESPECIAL + EXTENSIÓN DE CUOTA
+// ══════════════════════════════════════════════════════════════
+
+// Avanza fecha según forma de pago del préstamo
+function intEspAvanzarFecha(fechaStr, formaPago){
+  const d=new Date(fechaStr+'T12:00:00');
+  if(formaPago==='Weekly')        d.setDate(d.getDate()+7);
+  else if(formaPago==='Biweekly') d.setDate(d.getDate()+15);
+  else                            d.setMonth(d.getMonth()+1);
+  while(d.getDay()===0) d.setDate(d.getDate()+1);
+  return d.toISOString().slice(0,10);
+}
+
+// Interés siempre es el fijo de la cuota — nunca se divide ni recalcula
+// Solo la multa varía según días de mora
+function intEspCalcularInteres(cu){
+  return parseFloat((cu.interes||0).toFixed(2));
+}
+
+function intEspModal(idPrestamo, numCuota){
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
+  const cu=p.cuotas.find(x=>x.num===numCuota);if(!cu)return;
+  const monedaP=p.moneda||'RD$';
+  const fmtP=n=>monedaP+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const dias=calcDiasMora(cu.fechaCuota);
+  const multaEst=parseFloat(calcMulta(cu,DB.config.multa_pct||5).toFixed(2));
+  const esInterestOnly=p.modalidad==='interest_only';
+  const esUltimaCuota=cu.num===p.cuotas.length;
+  const periodoLabel=p.formaPago==='Weekly'?'semanal':p.formaPago==='Biweekly'?'quincenal':'mensual';
+
+  // Interés siempre fijo de la cuota — la multa es lo que varía
+  const interesC=intEspCalcularInteres(cu);
+
+  // Capital pendiente para interest_only (solo informativo en última cuota)
+  const abonosCapital=(DB.abonos||[]).filter(a=>a.idPrestamo===p.id).reduce((a,x)=>a+x.monto,0);
+  const capitalPendienteIO=esInterestOnly
+    ? Math.max(0,p.cuotas.filter(c=>c.capital>0).reduce((a,c)=>a+c.capital,0)-abonosCapital)
+    : 0;
+
+  const totalEst=parseFloat((interesC+multaEst).toFixed(2));
+  const cobrosAnt=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota);
+  const totalCobrosAnt=cobrosAnt.reduce((a,x)=>a+(x.interes||0)+(x.multa||0),0);
+
+  const cobrosHtml=cobrosAnt.length?`<div style="margin-bottom:10px;padding:8px;background:var(--amber2);border-radius:var(--radius-sm);font-size:12px">
+    <strong>⚡ ${cobrosAnt.length} cobro${cobrosAnt.length>1?'s':''} especial${cobrosAnt.length>1?'es':''} anteriores — Total: ${fmtP(totalCobrosAnt)}</strong><br>
+    ${cobrosAnt.map(x=>`• ${fmtDate(x.fecha)}: ${fmtP(x.interes)} int. + ${fmtP(x.multa||0)} multa`).join('<br>')}
+  </div>`:'';
+
+  // Bloque especial para última cuota interest_only con capital vencido
+  const capitalVencidoHtml=(esInterestOnly&&esUltimaCuota&&capitalPendienteIO>0)?`
+    <div style="padding:10px;background:var(--red2);border:1.5px solid var(--red);border-radius:var(--radius-sm);margin-bottom:10px;font-size:12px">
+      <div style="font-weight:700;color:var(--red);margin-bottom:6px">⚠️ CAPITAL PENDIENTE VENCIDO — Última cuota</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div>Capital original: <strong>${fmtP(p.capital)}</strong></div>
+        <div>Abonos realizados: <strong style="color:var(--green)">${fmtP(abonosCapital)}</strong></div>
+        <div style="color:var(--red)">Capital pendiente: <strong>${fmtP(capitalPendienteIO)}</strong></div>
+        <div>Interés ${periodoLabel}: <strong style="color:var(--amber)">${fmtP(interesC)}</strong></div>
+      </div>
+      <div style="margin-top:6px;font-size:11px;color:var(--red)">
+        Se cobrará interés ${periodoLabel} sobre el capital vencido hasta que el cliente pague el capital completo.
+      </div>
+    </div>`:'';
+
+  const usuariosOpts=DB.users.filter(u=>u.activo).map(u=>`<option value="${escHtml(u.nombre)}">${escHtml(u.nombre)}</option>`).join('');
+
+  openModal(`💰 Cobrar Solo Interés — Cuota #${numCuota} | ${escHtml(p.nombreCliente)}`,`
+    ${cobrosHtml}
+    ${capitalVencidoHtml}
+    <div style="background:var(--gray2);padding:12px;border-radius:var(--radius-sm);margin-bottom:12px;font-size:13px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><strong>Préstamo:</strong> <span class="mono" style="color:var(--blue)">${escHtml(idPrestamo)}</span></div>
+        <div><strong>Modalidad:</strong> <span class="badge badge-purple" style="font-size:10px">${esInterestOnly?'Interest Only':'Capital + Interés'}</span></div>
+        <div><strong>Cuota #${numCuota} vence:</strong> <span style="color:var(--red)">${fmtDate(cu.fechaCuota)}</span></div>
+        <div><strong>Forma de pago:</strong> <span style="color:var(--blue);font-weight:600">${periodoLabel.charAt(0).toUpperCase()+periodoLabel.slice(1)}</span></div>
+        <div><strong>Días de mora:</strong> <span style="color:${dias>0?'var(--red)':'var(--gray)'}">${dias>0?dias+' días':'Al día'}</span></div>
+        <div><strong>Extensiones previas:</strong> <span style="color:var(--amber)">${cobrosAnt.length}</span></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
+        <div style="padding:6px;background:var(--white);border-radius:var(--radius-sm)"><div style="font-size:9px;color:var(--gray)">Interés ${periodoLabel}</div><div style="font-weight:700;color:var(--amber)">${fmtP(interesC)}</div></div>
+        <div style="padding:6px;background:var(--red2);border-radius:var(--radius-sm)"><div style="font-size:9px;color:var(--red)">Multa estimada</div><div style="font-weight:700;color:var(--red)">${fmtP(multaEst)}</div></div>
+        <div style="padding:6px;background:var(--navy2);border-radius:var(--radius-sm)"><div style="font-size:9px;color:#94a3b8">Total estimado</div><div style="font-weight:700;color:white">${fmtP(totalEst)}</div></div>
+      </div>
+    </div>
+    <div style="display:grid;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="form-label required">Interés a cobrar (${monedaP})</label>
+          <input id="ie-interes" type="number" class="form-input" value="${interesC}" min="0" step="0.01"></div>
+        <div><label class="form-label">Multa a cobrar (${monedaP})</label>
+          <input id="ie-multa" type="number" class="form-input" value="${multaEst}" min="0" step="0.01"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="form-label">Fecha de cobro</label>
+          <input id="ie-fecha" type="date" class="form-input" value="${today()}"></div>
+        <div><label class="form-label">Método</label>
+          <select id="ie-metodo" class="form-input"><option>Cash</option><option>Zeller</option><option>Transfer</option><option>Deposit</option><option>Check</option><option>Tarjeta</option></select></div>
+      </div>
+      <div><label class="form-label">Recibido por</label>
+        <select id="ie-cobrador" class="form-input">${usuariosOpts}</select></div>
+      <div><label class="form-label">Notas</label>
+        <input id="ie-notas" type="text" class="form-input" placeholder="Motivo del cobro especial..."></div>
+      <div style="padding:10px;background:var(--blue3);border-radius:var(--radius-sm);font-size:12px;color:var(--blue)">
+        📅 <strong>La cuota #${numCuota} se extenderá 1 período ${periodoLabel}.</strong>
+        Todas las cuotas siguientes también se correrán. El préstamo gana 1 período adicional.
+        ${esInterestOnly&&capitalPendienteIO>0?' Se puede repetir hasta que el cliente pague el capital.':''}
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-amber" style="color:white" onclick="intEspRegistrar('${idPrestamo}',${numCuota})">💰 Confirmar cobro y extender</button>`);
+}
+
+function intEspRegistrar(idPrestamo, numCuota){
+  const p=DB.prestamos.find(x=>x.id===idPrestamo);if(!p)return;
+  const cu=p.cuotas.find(x=>x.num===numCuota);if(!cu)return;
+  const interes=parseFloat(document.getElementById('ie-interes').value)||0;
+  const multa=parseFloat(document.getElementById('ie-multa').value)||0;
+  const fecha=document.getElementById('ie-fecha').value||today();
+  const metodo=document.getElementById('ie-metodo').value||'Cash';
+  const cobrador=document.getElementById('ie-cobrador').value||currentUser.nombre;
+  const notas=document.getElementById('ie-notas').value||'';
+  const monedaP=p.moneda||'RD$';
+  const fmtP=n=>monedaP+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(interes<=0){toast('El interés a cobrar debe ser mayor a 0','error');return;}
+
+  // Contar extensiones previas de esta cuota
+  const extPrevias=(DB.interesesEsp||[]).filter(x=>x.idPrestamo===idPrestamo&&x.numCuota===numCuota).length;
+
+  // 1. Registrar cobro especial
+  if(!DB.interesesEsp)DB.interesesEsp=[];
+  DB.interesesEsp.push({
+    id:uid(),idPrestamo,idCliente:p.idCliente,nombreCliente:p.nombreCliente,
+    numCuota,fechaCuotaOriginal:cu.fechaCuota,
+    interes,multa,total:parseFloat((interes+multa).toFixed(2)),
+    fecha,metodo,cobrador,notas,moneda:monedaP,
+    tipo:'INTERES_ESP',
+    extension: extPrevias+1,
+    formaPago:p.formaPago,
+    registradoPor:currentUser.username
+  });
+
+  // 2. Registrar en historial de pagos
+  DB.pagos.push({
+    id:uid(),idPrestamo,idCliente:p.idCliente,nombreCliente:p.nombreCliente,
+    numCuota,monto:interes,multa,fecha,metodo,cobrador,notas,moneda:monedaP,
+    tipo:'INTERES_ESP',
+    fechaVencimiento:cu.fechaCuota,
+    estadoCuota:'INTERES_ESP',
+    registradoPor:currentUser.username
+  });
+
+  // 3. Extender cuota según forma de pago del préstamo
+  const cuotasPend=p.cuotas
+    .filter(c=>calcEstadoCuota(c)!=='PAGADO'&&c.num>=numCuota)
+    .sort((a,b)=>a.num-b.num);
+  cuotasPend.forEach(c=>{
+    c.fechaCuota=intEspAvanzarFecha(c.fechaCuota,p.formaPago);
+  });
+
+  sDB('prestamos');sDB('pagos');sDB('interesesEsp');
+  const periodoLabel=p.formaPago==='Weekly'?'semana':p.formaPago==='Biweekly'?'quincena':'mes';
+  addLog('PAGO',`Interés especial cobrado - Prestamo:${idPrestamo} Cuota:#${numCuota} | Extensión #${extPrevias+1} | ${fmtP(interes)} int. + ${fmtP(multa)} multa | ${cobrador}`);
+  closeModal();
+  toast(`💰 ${fmtP(interes+multa)} cobrado — Cuota #${numCuota} extendida ${extPrevias+1} ${periodoLabel}${extPrevias+1>1?'s':''}${''}`, 'success');
+  pgMostrarCuotas();
+}
+
+function intEspEditar(idPago){
+  // Buscar en DB.interesesEsp por fecha y préstamo (el id en pagos es diferente)
+  // Primero buscar en pagos para obtener datos
+  const pg=DB.pagos.find(x=>x.id===idPago&&x.tipo==='INTERES_ESP');
+  if(!pg){toast('Cobro no encontrado','error');return;}
+  const reg=(DB.interesesEsp||[]).find(x=>x.idPrestamo===pg.idPrestamo&&x.numCuota===pg.numCuota&&x.fecha===pg.fecha);
+  if(!reg){toast('Registro especial no encontrado','error');return;}
+  const monedaP=reg.moneda||'RD$';
+  const usuariosOpts=DB.users.filter(u=>u.activo).map(u=>`<option value="${escHtml(u.nombre)}" ${(reg.cobrador||'')===(u.nombre)?'selected':''}>${escHtml(u.nombre)}</option>`).join('');
+  openModal('✏️ Editar cobro especial — Cuota #'+reg.numCuota,`
+    <div style="background:var(--amber2);padding:10px;border-radius:var(--radius-sm);margin-bottom:12px;font-size:12px">
+      <strong>Préstamo:</strong> ${escHtml(reg.idPrestamo)} — ${escHtml(reg.nombreCliente)}<br>
+      <strong>Cuota #${reg.numCuota}</strong> | Cobro original: ${fmtDate(reg.fecha)}
+    </div>
+    <div style="display:grid;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="form-label required">Interés cobrado (${monedaP})</label>
+          <input id="ie-edit-interes" type="number" class="form-input" value="${reg.interes||0}" min="0" step="0.01"></div>
+        <div><label class="form-label">Multa cobrada (${monedaP})</label>
+          <input id="ie-edit-multa" type="number" class="form-input" value="${reg.multa||0}" min="0" step="0.01"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="form-label">Fecha de cobro</label>
+          <input id="ie-edit-fecha" type="date" class="form-input" value="${reg.fecha||''}"></div>
+        <div><label class="form-label">Método</label>
+          <select id="ie-edit-metodo" class="form-input">
+            ${['Cash','Zeller','Transfer','Deposit','Check','Tarjeta'].map(m=>`<option ${reg.metodo===m?'selected':''}>${m}</option>`).join('')}
+          </select></div>
+      </div>
+      <div><label class="form-label">Recibido por</label>
+        <select id="ie-edit-cobrador" class="form-input">${usuariosOpts}</select></div>
+      <div><label class="form-label">Notas</label>
+        <input id="ie-edit-notas" type="text" class="form-input" value="${escHtml(reg.notas||'')}" placeholder="Observaciones..."></div>
+      <div style="font-size:11px;color:var(--gray)">📋 Solo se editan los datos del cobro. La extensión de fecha no cambia.</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="intEspEditarGuardar('${reg.id}','${idPago}')">💾 Guardar</button>`);
+}
+
+function intEspEditarGuardar(regId, pagoId){
+  const reg=(DB.interesesEsp||[]).find(x=>x.id===regId);
+  const pg=DB.pagos.find(x=>x.id===pagoId);
+  if(!reg){toast('Registro no encontrado','error');return;}
+  const interes=parseFloat(document.getElementById('ie-edit-interes').value)||0;
+  const multa=parseFloat(document.getElementById('ie-edit-multa').value)||0;
+  const fecha=document.getElementById('ie-edit-fecha').value||reg.fecha;
+  const metodo=document.getElementById('ie-edit-metodo').value||'Cash';
+  const cobrador=document.getElementById('ie-edit-cobrador').value||currentUser.nombre;
+  const notas=document.getElementById('ie-edit-notas').value||'';
+  // Actualizar registro especial
+  reg.interes=interes;
+  reg.multa=multa;
+  reg.total=parseFloat((interes+multa).toFixed(2));
+  reg.fecha=fecha;
+  reg.metodo=metodo;
+  reg.cobrador=cobrador;
+  reg.notas=notas;
+  // Actualizar en historial de pagos
+  if(pg){
+    pg.monto=interes;
+    pg.multa=multa;
+    pg.fecha=fecha;
+    pg.metodo=metodo;
+    pg.cobrador=cobrador;
+    pg.notas=notas;
+  }
+  sDB('interesesEsp');sDB('pagos');
+  addLog('PAGO',`Cobro especial editado - Prestamo:${reg.idPrestamo} Cuota:#${reg.numCuota} | ${cobrador}`);
+  closeModal();toast('✅ Cobro especial actualizado','success');
+  renderPagos();
+}
+
 function abRegistrarDesdeModal(){
   const idPrestamo=document.getElementById('pg-prest')?.value||'';
   if(!idPrestamo){toast('Selecciona un préstamo primero','error');return;}
@@ -3058,23 +3301,89 @@ function abRegistrar(){
 }
 
 function abRecalcular(p, montoAbono, fechaAbono){
-  // LÓGICA DE ABONOS A CAPITAL:
-  // Anticipado (abono antes de vencimiento):
-  //   - Cuota cubierta completamente: PAGADA sin interés
-  //   - Cuota cubierta parcialmente: capital se reduce, interés se reduce
-  //     proporcionalmente al capital remaining vs capital original
-  // Vencido (abono en o después de vencimiento):
-  //   - El interés completo se cobra primero, luego aplica al capital
-  //   - Cuota cubierta completamente: PAGADA con interés completo
-  //   - Cuota cubierta parcialmente: PARCIAL, interés proporcional a días
+  // ══════════════════════════════════════════════════════════════
+  // LÓGICA DE ABONOS A CAPITAL
+  //
+  // INTEREST ONLY:
+  //   Las cuotas intermedias (1..N-1) son SOLO INTERÉS — capital=0.
+  //   El abono NUNCA toca esas cuotas; solo reduce la ÚLTIMA cuota
+  //   (que es la que contiene todo el capital + interés del último período).
+  //   Si el abono cubre todo el capital pendiente de la última cuota
+  //   Y el interés de esa cuota ya fue pagado, el préstamo se cancela.
+  //   Si NO ha sido pagado el interés de la última cuota, el abono
+  //   reduce solo el capital y la amortización de esa cuota se recalcula.
+  //
+  // CAPITAL + INTERÉS (modalidad normal):
+  //   Anticipado: cuota cubierta completamente → PAGADA sin interés proporcional
+  //               cuota cubierta parcialmente  → reduce capital e interés proporcionalmente
+  //   Vencido:    se cobra interés completo primero, luego aplica al capital
+  // ══════════════════════════════════════════════════════════════
 
   const fechaAb = fechaAbono || today();
   let saldo = parseFloat(montoAbono);
 
+  // ── INTEREST ONLY ─────────────────────────────────────────────
+  if(p.modalidad === 'interest_only'){
+    // Solo operamos sobre cuotas que tienen capital > 0 (la última o
+    // aquellas que ya tuvieron su capital reducido por abonos previos)
+    const cuotasConCapital = p.cuotas
+      .filter(cu => calcEstadoCuota(cu) !== 'PAGADO' && cu.capital > 0)
+      .sort((a,b) => a.num - b.num);
+
+    for(const cu of cuotasConCapital){
+      if(saldo <= 0) break;
+      if(!cu._capitalOriginal) cu._capitalOriginal = cu.capital;
+      if(!cu._interesOriginal) cu._interesOriginal = cu.interes;
+
+      const capPend = parseFloat(Math.max(0, cu.capital - (cu._abonoCapital||0)).toFixed(2));
+      if(capPend <= 0) continue;
+
+      // El interés de esta cuota ya fue cobrado (cuota.abono cubre el interes)?
+      const interesCuota = cu._interesOriginal || cu.interes;
+      const interesYaCobrado = (cu.abono||0) >= interesCuota;
+
+      if(saldo >= capPend){
+        // Abono cubre todo el capital pendiente
+        cu._abonoCapital = parseFloat(((cu._abonoCapital||0) + capPend).toFixed(2));
+        cu.capital = 0;
+        cu.abono = parseFloat((interesYaCobrado ? interesCuota : (cu.abono||0)) + capPend).toFixed(2);
+        cu.abono = parseFloat(cu.abono);
+        // Si el interés ya fue cobrado, la cuota queda PAGADA
+        if(interesYaCobrado){
+          cu.amortizacion = parseFloat((interesCuota + capPend).toFixed(2));
+          cu.estado = 'PAGADO';
+          cu.fechaPago = fechaAb;
+        } else {
+          // Solo se redujo el capital; el interés aún queda pendiente
+          cu.amortizacion = parseFloat((interesCuota).toFixed(2));
+          cu.estado = 'PARCIAL';
+          cu.fechaPago = fechaAb;
+        }
+        saldo = parseFloat((saldo - capPend).toFixed(2));
+      } else {
+        // Abono parcial al capital — reducir capital, recalcular amortizacion
+        cu._abonoCapital = parseFloat(((cu._abonoCapital||0) + saldo).toFixed(2));
+        cu.capital = parseFloat((capPend - saldo).toFixed(2));
+        cu.abono = parseFloat(((cu.abono||0) + saldo).toFixed(2));
+        // La amortizacion ahora es interés fijo + capital reducido
+        cu.amortizacion = parseFloat((interesCuota + cu.capital).toFixed(2));
+        cu.estado = 'PARCIAL';
+        cu.fechaPago = fechaAb;
+        saldo = 0;
+      }
+    }
+
+    // Verificar si el préstamo quedó cancelado
+    const todasPagadas = p.cuotas.every(cu => calcEstadoCuota(cu) === 'PAGADO');
+    if(todasPagadas) p.estado = 'CANCELADO';
+    return;
+  }
+
+  // ── CAPITAL + INTERÉS (modalidad normal) ──────────────────────
   const cuotasPend = p.cuotas.filter(cu => calcEstadoCuota(cu) !== 'PAGADO')
                               .sort((a,b) => a.num - b.num);
 
-  // Guardar capital original de cada cuota para cálculo proporcional
+  // Guardar capital/interés original de cada cuota para cálculo proporcional
   for(const cu of cuotasPend){
     if(!cu._capitalOriginal) cu._capitalOriginal = cu.capital;
     if(!cu._interesOriginal) cu._interesOriginal = cu.interes;
@@ -3089,21 +3398,21 @@ function abRecalcular(p, montoAbono, fechaAbono){
     const yaAbonado = cu.abono || 0;
 
     if(esAnticipado){
-      // ANTICIPADO: el interés se reduce proporcionalmente al capital que queda
+      // ANTICIPADO: interés se reduce proporcionalmente al capital que queda
       const capPendiente = parseFloat(Math.max(0, cu.capital - yaAbonado).toFixed(2));
-      if(capPendiente <= 0){ cu.estado='PAGADO'; cu.interes=0; cu.amortizacion=0; continue; }
+      if(capPendiente <= 0){ cu.estado='PAGADO'; continue; }
 
       if(saldo >= capPendiente){
-        // Cubre todo el capital pendiente → PAGADA sin interés
+        // Cubre todo el capital → PAGADA sin interés (pagó anticipado)
         cu.abono = parseFloat((yaAbonado + capPendiente).toFixed(2));
         cu.capital = 0;
         cu.interes = 0;
-        cu.amortizacion = 0;
+        cu.amortizacion = parseFloat(capPendiente.toFixed(2));
         cu.estado = 'PAGADO';
         cu.fechaPago = fechaAb;
         saldo = parseFloat((saldo - capPendiente).toFixed(2));
       } else {
-        // Cubre parcialmente el capital → reducir capital e interés proporcionalmente
+        // Cubre parcialmente → reducir capital e interés proporcionalmente
         const nuevoCapital = parseFloat(Math.max(0, cu.capital - saldo).toFixed(2));
         const proporcion = capOrig > 0 ? nuevoCapital / capOrig : 0;
         const nuevoInteres = parseFloat((intOrig * proporcion).toFixed(2));
@@ -3116,21 +3425,20 @@ function abRecalcular(p, montoAbono, fechaAbono){
         saldo = 0;
       }
     } else {
-      // VENCIDO: interés completo se cobra primero, resto aplica a capital
+      // VENCIDO: interés completo se cobra primero, resto aplica al capital
       const interesPend = parseFloat(Math.max(0, cu.interes - (cu._interesAbonado||0)).toFixed(2));
       const capPend = parseFloat(Math.max(0, cu.capital - (cu._capitalAbonado||0)).toFixed(2));
       const totalPend = parseFloat((interesPend + capPend).toFixed(2));
       if(totalPend <= 0){ cu.estado='PAGADO'; continue; }
 
       if(saldo >= totalPend){
-        // Cubre la cuota completa
         cu.abono = parseFloat((yaAbonado + totalPend).toFixed(2));
         cu.amortizacion = parseFloat((cu.capital + cu.interes).toFixed(2));
         cu.estado = 'PAGADO';
         cu.fechaPago = fechaAb;
         saldo = parseFloat((saldo - totalPend).toFixed(2));
       } else {
-        // Cubre parcialmente — pagar interés primero, luego capital
+        // Parcial — interés primero, luego capital
         let remaining = saldo;
         if(!cu._interesAbonado) cu._interesAbonado = 0;
         if(!cu._capitalAbonado) cu._capitalAbonado = 0;
@@ -3162,6 +3470,51 @@ function abEliminar(id){
 function abEliminarConfirm(id){
   DB.abonos=DB.abonos.filter(x=>x.id!==id);
   sDB('abonos');closeModal();toast('Abono eliminado');renderAbonos();
+}
+
+function intEspEliminar(id){
+  // Buscar el registro para revertir la extensión de fechas
+  const reg=(DB.interesesEsp||[]).find(x=>x.id===id);
+  if(!reg){toast('Registro no encontrado','error');return;}
+  openModal('🗑 Eliminar cobro especial',`
+    <div class="alert alert-warning">¿Eliminar este cobro de interés especial?</div>
+    <div style="font-size:13px;margin-top:8px">
+      <strong>Préstamo:</strong> ${escHtml(reg.idPrestamo)} — Cuota #${reg.numCuota}<br>
+      <strong>Fecha cobro:</strong> ${fmtDate(reg.fecha)}<br>
+      <strong>Interés:</strong> ${fmt(reg.interes)} | <strong>Multa:</strong> ${fmt(reg.multa||0)}
+    </div>
+    <div class="alert alert-info" style="margin-top:8px">📅 Las fechas de las cuotas se revertirán automáticamente 1 período atrás.</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="intEspEliminarConfirm('${id}')">🗑 Eliminar</button>`);
+}
+function intEspEliminarConfirm(id){
+  const reg=(DB.interesesEsp||[]).find(x=>x.id===id);
+  if(!reg)return;
+  // Revertir extensión de fecha: retroceder 1 período a cuotas desde numCuota en adelante
+  const p=DB.prestamos.find(x=>x.id===reg.idPrestamo);
+  if(p){
+    const formaPago=reg.formaPago||p.formaPago||'Monthly';
+    const cuotasPend=p.cuotas
+      .filter(c=>calcEstadoCuota(c)!=='PAGADO'&&c.num>=reg.numCuota)
+      .sort((a,b)=>a.num-b.num);
+    cuotasPend.forEach(c=>{
+      const d=new Date(c.fechaCuota+'T12:00:00');
+      if(formaPago==='Weekly')        d.setDate(d.getDate()-7);
+      else if(formaPago==='Biweekly') d.setDate(d.getDate()-15);
+      else                            d.setMonth(d.getMonth()-1);
+      // Evitar domingos
+      while(d.getDay()===0) d.setDate(d.getDate()-1);
+      c.fechaCuota=d.toISOString().slice(0,10);
+    });
+    sDB('prestamos');
+  }
+  DB.interesesEsp=DB.interesesEsp.filter(x=>x.id!==id);
+  // Eliminar también del historial de pagos
+  DB.pagos=DB.pagos.filter(x=>!(x.tipo==='INTERES_ESP'&&x.idPrestamo===reg.idPrestamo&&x.numCuota===reg.numCuota&&x.fecha===reg.fecha));
+  sDB('interesesEsp');sDB('pagos');
+  addLog('PAGO',`Cobro especial revertido - Prestamo:${reg.idPrestamo} Cuota:#${reg.numCuota} | Fecha restaurada`);
+  closeModal();toast('✅ Cobro especial eliminado y fechas restauradas','success');
+  renderPagos();
 }
 
 
@@ -4398,19 +4751,34 @@ function pfCambiarPass(){
 // ══════════════════════════════════════════════════════════════
 function renderBitacora(){
   const log=DB.log||[];
+  // Filtro: por defecto ultima semana
+  const filtroActual=window._logFiltro||'semana';
+  const ahora=new Date();
+  const hace7=new Date(ahora); hace7.setDate(hace7.getDate()-7);
+  const hace30=new Date(ahora); hace30.setDate(hace30.getDate()-30);
+  let logFiltrado=log;
+  if(filtroActual==='semana') logFiltrado=log.filter(e=>new Date(e.fecha)>=hace7);
+  else if(filtroActual==='mes') logFiltrado=log.filter(e=>new Date(e.fecha)>=hace30);
+  // 'todo' = sin filtro
   document.getElementById('page-log').innerHTML=`
-    <div class="page-header"><h1>📒 Bitácora</h1><p>Registro de actividad del sistema — ${log.length} eventos</p></div>
+    <div class="page-header"><h1>📒 Bitácora</h1><p>Registro de actividad del sistema — ${logFiltrado.length} de ${log.length} eventos</p></div>
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
         <div class="card-title" style="margin-bottom:0"><span class="ico">📒</span>Actividad reciente</div>
-        <div style="display:flex;gap:8px">
-          <input class="search-input" placeholder="Buscar..." oninput="filterTable('log-tbl',this.value)">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-sm ${filtroActual==='semana'?'btn-primary':'btn-secondary'}" onclick="window._logFiltro='semana';renderBitacora()">Última semana</button>
+            <button class="btn btn-sm ${filtroActual==='mes'?'btn-primary':'btn-secondary'}" onclick="window._logFiltro='mes';renderBitacora()">Último mes</button>
+            <button class="btn btn-sm ${filtroActual==='todo'?'btn-primary':'btn-secondary'}" onclick="window._logFiltro='todo';renderBitacora()">Todo</button>
+          </div>
+          <input class="search-input" placeholder="Buscar..." oninput="filterTable('log-tbl',this.value)" style="width:180px">
           ${isDueno()?`<button class="btn btn-red btn-sm" onclick="limpiarBitacora()">🗑 Limpiar</button>`:''}
         </div>
       </div>
+      ${logFiltrado.length===0?'<div style="text-align:center;padding:24px;color:var(--gray)">Sin registros en el período seleccionado</div>':''}
       <div class="table-wrap"><table id="log-tbl">
         <thead><tr><th>Fecha / Hora</th><th>Usuario</th><th>Acción</th><th>Detalle</th></tr></thead>
-        <tbody>${log.slice(0,200).map(e=>{
+        <tbody>${logFiltrado.slice(0,300).map(e=>{
           const dt=new Date(e.fecha);
           const fmtDt=dt.toLocaleDateString('es-DO',{day:'2-digit',month:'short',year:'numeric'})+' '+dt.toLocaleTimeString('es-DO',{hour:'2-digit',minute:'2-digit'});
           const badges={LOGIN:'badge-green',LOGOUT:'badge-gray',CONFIG:'badge-blue',CLIENTE:'badge-purple',PRESTAMO:'badge-amber',PAGO:'badge-green',USUARIO:'badge-blue'};
@@ -4506,7 +4874,7 @@ async function fbGuardar(key){
 }
 
 async function fbCargar(){
-  const keys=['config','users','clientes','prestamos','pagos','abonos','gastos','nomina_emp','nomina_pagos','log'];
+  const keys=['config','users','clientes','prestamos','pagos','abonos','interesesEsp','gastos','nomina_emp','nomina_pagos','log'];
   let loaded=false;
   for(const key of keys){
     try {
@@ -4535,7 +4903,7 @@ async function fbCargar(){
 }
 
 function fbEscucharCambios(){
-  const keys=['prestamos','pagos','clientes','abonos','gastos','nomina_emp','nomina_pagos'];
+  const keys=['prestamos','pagos','clientes','abonos','interesesEsp','gastos','nomina_emp','nomina_pagos','log'];
   keys.forEach(key=>{
     _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
       if(!snap.exists)return;
@@ -4544,14 +4912,15 @@ function fbEscucharCambios(){
         if(val!==null){ DB[key]=val; try{ss(key,val);}catch(e){} }
         try{
           if(typeof currentPage!=='undefined'&&currentPage){
-            const pg=document.getElementById('page-'+currentPage);
-            if(pg&&pg.style.display!=='none'){
-              if(typeof renderPrestamos==='function'&&(currentPage==='prestamos'||currentPage==='pagos'||currentPage==='vencidas')) {
-                if(currentPage==='prestamos') renderPrestamos();
-                else if(currentPage==='pagos') renderPagos();
-                else if(currentPage==='vencidas') renderVencidas();
-              }
-            }
+            const renderMap={
+              'prestamos': ()=>typeof renderPrestamos==='function'&&renderPrestamos(),
+              'pagos':     ()=>typeof renderPagos==='function'&&renderPagos(),
+              'vencidas':  ()=>typeof renderVencidas==='function'&&renderVencidas(),
+              'clientes':  ()=>typeof renderClientes==='function'&&renderClientes(),
+              'log':       ()=>typeof renderBitacora==='function'&&renderBitacora(),
+              'dashboard': ()=>typeof renderDashboard==='function'&&renderDashboard(),
+            };
+            if(renderMap[currentPage]) renderMap[currentPage]();
           }
         }catch(e){}
       }catch(e){}
@@ -4561,20 +4930,48 @@ function fbEscucharCambios(){
 
 const _sDB_orig = sDB;
 window._fbActivo = false;
+
+// Muestra pantalla de bloqueo cuando no hay Firebase
+function mostrarBloqueoOffline(){
+  if(document.getElementById('bloqueo-offline')) return;
+  const blk=document.createElement('div');
+  blk.id='bloqueo-offline';
+  blk.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,0.92);z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;backdrop-filter:blur(4px)';
+  blk.innerHTML=`
+    <div style="background:white;border-radius:16px;padding:32px 40px;max-width:420px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+      <div style="font-size:48px;margin-bottom:12px">🔒</div>
+      <div style="font-size:20px;font-weight:800;color:#1e293b;margin-bottom:8px">Sin conexión a Firebase</div>
+      <div style="font-size:13px;color:#64748b;margin-bottom:20px;line-height:1.5">
+        El sistema no puede guardar datos sin conexión a Firebase.<br>
+        Por seguridad, todas las acciones de edición están bloqueadas.
+      </div>
+      <div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:14px;margin-bottom:20px">
+        <div style="font-size:12px;color:#92400e;font-weight:600;margin-bottom:4px">📞 Contacte al administrador</div>
+        <div style="font-size:18px;font-weight:800;color:#d97706">Edward Villa</div>
+        <div style="font-size:16px;font-weight:700;color:#1e293b">849-857-9190</div>
+      </div>
+      <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer;width:100%">
+        🔄 Reintentar conexión
+      </button>
+      <div style="font-size:11px;color:#94a3b8;margin-top:12px">Puedes seguir navegando y consultando datos en modo solo lectura</div>
+    </div>`;
+  document.body.appendChild(blk);
+}
+
+function ocultarBloqueoOffline(){
+  const blk=document.getElementById('bloqueo-offline');
+  if(blk) blk.remove();
+}
+
 window.sDB = function(key){
   if(!window._fbActivo){
-    // Solo mostrar aviso si Firebase ya terminó de intentar conectar (resuelto) Y el usuario está activo
-    // Durante el arranque (_fbResuelto=false) simplemente no guardamos sin avisar
     if(window._fbResuelto && window._appListo){
       const dot=document.getElementById('fb-dot');
       const txt=document.getElementById('fb-text');
       if(dot) dot.style.background='#ef4444';
       if(txt) txt.textContent='Sin conexión';
-      if(!window._fbOfflineToastShown){
-        window._fbOfflineToastShown=true;
-        setTimeout(()=>{window._fbOfflineToastShown=false;},8000);
-        toast('⚠️ Sin conexión a Firebase — Comuníquese con el administrador Edward Villa al 849-857-9190','error');
-      }
+      // Mostrar bloqueo
+      mostrarBloqueoOffline();
     }
     return; // No guardar nada
   }
@@ -4586,10 +4983,12 @@ window.sDB = function(key){
   fbGuardar(key).then(()=>{
     if(dot) dot.style.background='#22c55e';
     if(txt) txt.textContent='✓ Guardado';
+    // Ocultar bloqueo si estaba visible
+    ocultarBloqueoOffline();
   }).catch(()=>{
     if(dot) dot.style.background='#ef4444';
     if(txt) txt.textContent='Error al guardar';
-    toast('⚠️ Error al guardar — Comuníquese con el administrador Edward Villa al 849-857-9190','error');
+    toast('⚠️ Error al guardar — Comuníquese con Edward Villa al 849-857-9190','error');
   });
 };
 
@@ -4604,6 +5003,8 @@ window.fbIniciar = async function(){
     if(loaded){
       applyConfig();
       if(typeof applyEstilos==='function') applyEstilos();
+      // Reparar cuotas dañadas por bug anterior
+      setTimeout(repararCuotasInterestOnly,500);
       // Proteger sesión activa
       if(currentUser){
         const userActualizado = DB.users.find(u=>u.id===currentUser.id);
@@ -4615,17 +5016,21 @@ window.fbIniciar = async function(){
         }
       }
       setStatus('#22c55e','✓ Firebase');
+    ocultarBloqueoOffline();
     } else {
-      const keys=['config','users','clientes','prestamos','pagos','abonos','gastos','nomina_emp','nomina_pagos','log'];
+      const keys=['config','users','clientes','prestamos','pagos','abonos','interesesEsp','gastos','nomina_emp','nomina_pagos','log'];
       for(const k of keys) await fbGuardar(k);
       setStatus('#22c55e','✓ Firebase');
-    fbEscucharCambios();
     }
+    // Siempre iniciar listeners en tiempo real
+    fbEscucharCambios();
     // Iniciar indicador de presencia del administrador
     _fbIniciarPresencia();
   } catch(e) {
     setStatus('#ef4444','Sin conexión');
     console.warn('Firebase error:', e.message);
+    // Mostrar bloqueo si hay sesión activa
+    if(window._appListo) setTimeout(mostrarBloqueoOffline, 500);
   } finally {
     window._fbResuelto = true; // Firebase ya terminó de intentar conectar
   }
@@ -4657,6 +5062,107 @@ function _fbIniciarPresencia(){
     });
   } catch(e){ console.warn('Presence error:',e.message); }
 }
+
+// ══════════════════════════════════════════════════════════════
+// REPARACIÓN AUTOMÁTICA: Fix cuotas de interest_only dañadas por bug
+// Cuotas con capital=0 (intermedias) que quedaron amortizacion=0, interes=0
+// pero nunca se cobró ni un centavo → restaurar a sus valores originales
+// ══════════════════════════════════════════════════════════════
+function repararCuotasInterestOnly(){
+  let reparadas=0;
+  (DB.prestamos||[]).forEach(p=>{
+    if(p.modalidad!=='interest_only')return;
+    // Calcular interés fijo original del préstamo
+    const tasa=parseFloat(p.tasa||0)/100;
+    const interesFijo=parseFloat((p.capital*tasa).toFixed(2));
+    p.cuotas.forEach((cu,idx)=>{
+      const esUltima=(idx===p.cuotas.length-1);
+      // Cuota intermedia dañada: capital=0, interes=0, amortizacion=0, abono=0, estado=PAGADO
+      if(!esUltima && cu.capital===0 && cu.interes===0 && cu.amortizacion===0 && (cu.abono||0)===0 && cu.estado==='PAGADO'){
+        cu.interes=interesFijo;
+        cu.amortizacion=interesFijo;
+        cu.estado='PENDIENTE';
+        cu._estadoForzado=null;
+        cu.fechaPago=null;
+        reparadas++;
+      }
+    });
+    // Si el préstamo fue marcado CANCELADO por el bug, reactivarlo
+    const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
+    if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
+      p.estado='ACTIVO';
+      reparadas++;
+    }
+  });
+  if(reparadas>0){
+    sDB('prestamos');
+    console.log('Thunder Load: '+reparadas+' cuotas/préstamos reparados automáticamente');
+    addLog('CONFIG','Reparación automática: '+reparadas+' cuotas interest_only restauradas');
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// CIERRE AUTOMÁTICO POR INACTIVIDAD — 30 minutos
+// ══════════════════════════════════════════════════════════════
+(function(){
+  const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutos
+  const AVISO_MS   =  2 * 60 * 1000; // aviso 2 min antes
+  let timerCierre, timerAviso, toastAviso;
+
+  function resetTimer(){
+    clearTimeout(timerCierre);
+    clearTimeout(timerAviso);
+    // Ocultar aviso si existe
+    const av=document.getElementById('inactividad-aviso');
+    if(av) av.remove();
+
+    if(!window.currentUser) return; // No hay sesión activa
+
+    // Aviso 2 minutos antes
+    timerAviso=setTimeout(()=>{
+      if(!window.currentUser) return;
+      // Mostrar banner de aviso
+      const banner=document.createElement('div');
+      banner.id='inactividad-aviso';
+      banner.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:white;padding:14px 24px;border-radius:12px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,0.4);display:flex;align-items:center;gap:12px';
+      banner.innerHTML='⏱️ La sesión se cerrará en <strong id="countdown-seg">120</strong> segundos por inactividad. <button onclick="resetTimer()" style="margin-left:8px;padding:4px 12px;background:var(--blue);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">Continuar</button>';
+      document.body.appendChild(banner);
+      // Contador regresivo
+      let seg=120;
+      const interval=setInterval(()=>{
+        seg--;
+        const el=document.getElementById('countdown-seg');
+        if(el) el.textContent=seg;
+        if(seg<=0) clearInterval(interval);
+      },1000);
+    }, TIMEOUT_MS - AVISO_MS);
+
+    // Cierre automático
+    timerCierre=setTimeout(()=>{
+      if(!window.currentUser) return;
+      const av2=document.getElementById('inactividad-aviso');
+      if(av2) av2.remove();
+      // Cerrar sesión
+      doLogout();
+      // Mostrar mensaje
+      setTimeout(()=>{
+        if(typeof toast==='function') toast('⏱️ Sesión cerrada por inactividad (30 min)','error');
+      },300);
+    }, TIMEOUT_MS);
+  }
+
+  // Eventos que reinician el contador
+  ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(ev=>{
+    document.addEventListener(ev, resetTimer, {passive:true});
+  });
+
+  // Iniciar cuando hay sesión activa
+  window._resetInactividad=resetTimer;
+  // Arranca al cargar
+  document.addEventListener('DOMContentLoaded', resetTimer);
+})();
+
 </script>
 </body>
 </html>
