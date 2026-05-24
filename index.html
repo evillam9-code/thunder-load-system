@@ -1171,24 +1171,38 @@ function renderDashboard(){
   pagosFiltrados=pagosFiltrados.filter(pg=>enPeriodo(pg.fecha));
   const totalCobrado=pagosFiltrados.reduce((a,pg)=>a+pg.monto,0);
   const beneficios=pagosFiltrados.reduce((a,pg)=>a+pg.multa,0)+totalInteres;
-  // Intereses realmente cobrados en el período (de los pagos)
-  // Intereses de pagos normales
-  const interesesCobradosNorm=pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>{
+  // ── Intereses cobrados en el período ──────────────────────────
+  // 1. Pagos normales de cuotas completas (capital+interes)
+  const pgNormales=pagosFiltrados.filter(pg=>!pg.tipo||pg.tipo==='normal');
+  const interesesCobradosNorm=pgNormales.reduce((a,pg)=>{
     const prest=DB.prestamos.find(x=>x.id===pg.idPrestamo);
     if(!prest)return a;
     const cuota=prest.cuotas.find(x=>x.num===pg.numCuota);
-    return a+(cuota?cuota.interes:0);
+    return a+(cuota?parseFloat(cuota.interes||0):0);
   },0);
-  // Intereses especiales cobrados en el período
+
+  // 2. Solo Interés capital+interes (INTERES_SOLO) — interés cobrado directo
+  const pgSoloInteresCI=pagosFiltrados.filter(pg=>pg.tipo==='INTERES_SOLO');
+  const interesesSoloCIcobrados=pgSoloInteresCI.reduce((a,pg)=>a+parseFloat(pg.monto||0),0);
+  const multasSoloCIcobradas=pgSoloInteresCI.reduce((a,pg)=>a+parseFloat(pg.multa||0),0);
+
+  // 3. Solo Interés interest_only (INTERES_ESP) — de DB.interesesEsp
   let intEspFiltrados=(DB.interesesEsp||[]).filter(x=>enPeriodo(x.fecha));
   if(dashCliente) intEspFiltrados=intEspFiltrados.filter(x=>x.idCliente===dashCliente);
   const interesesEspCobrados=intEspFiltrados.reduce((a,x)=>a+(x.interes||0),0);
   const multasEspCobradas=intEspFiltrados.reduce((a,x)=>a+(x.multa||0),0);
-  const interesesCobrados=parseFloat((interesesCobradosNorm+interesesEspCobrados).toFixed(2));
-  // Multas cobradas en el período (pagos normales + especiales)
-  const multasCobradas=parseFloat((pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>a+parseFloat(pg.multa||0),0)+multasEspCobradas).toFixed(2));
-  // Capital cobrado en el período
-  const capitalCobrado=parseFloat((pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').reduce((a,pg)=>a+parseFloat(pg.monto||0),0)-interesesCobradosNorm).toFixed(2));
+
+  // Total intereses = normales + Solo Interés C+I + Solo Interés IO
+  const interesesCobrados=parseFloat((interesesCobradosNorm+interesesSoloCIcobrados+interesesEspCobrados).toFixed(2));
+
+  // Multas totales
+  const multasCobradas=parseFloat((
+    pagosFiltrados.filter(pg=>!pg.tipo||pg.tipo==='normal').reduce((a,pg)=>a+parseFloat(pg.multa||0),0)
+    +multasSoloCIcobradas+multasEspCobradas
+  ).toFixed(2));
+
+  // Capital cobrado
+  const capitalCobrado=parseFloat((pgNormales.reduce((a,pg)=>a+parseFloat(pg.monto||0),0)-interesesCobradosNorm).toFixed(2));
   // Gastos del período
   const gastosPeriodo=(DB.gastos||[]).filter(g=>enPeriodo(g.fecha)).reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nominaPeriodo=(DB.nomina_pagos||[]).filter(n=>enPeriodo(n.fecha)).reduce((a,n)=>a+parseFloat(n.salario||0),0);
@@ -1240,10 +1254,34 @@ function renderDashboard(){
       <div class="stat-card red"><div class="stat-ico">⚠️</div><div class="stat-label">Monto vencido</div><div class="stat-value" style="font-size:16px">${fmt(montoVencido)}</div><div class="stat-sub">${cuotasVencidas.length} cuotas en mora</div></div>
     </div>
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-card amber"><div class="stat-ico">📈</div><div class="stat-label">Intereses normales</div><div class="stat-value" style="font-size:16px">${fmt(interesesCobradosNorm)}</div><div class="stat-sub">${pagosFiltrados.filter(pg=>pg.tipo!=='INTERES_ESP').length} pagos del período</div></div>
-      <div class="stat-card" style="border-top:3px solid #f59e0b;background:linear-gradient(135deg,#fffbeb 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">⚡</div><div class="stat-label" style="color:#d97706">Intereses especiales<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">Solo Interés</span></div><div class="stat-value" style="font-size:16px;color:#d97706">${fmt(interesesEspCobrados)}</div><div class="stat-sub">${intEspFiltrados.length} cobro${intEspFiltrados.length!==1?'s':''} especial${intEspFiltrados.length!==1?'es':''}</div></div>
+      <div class="stat-card amber" style="grid-column:span 2">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="stat-ico" style="font-size:20px">📈</div>
+            <div class="stat-label">Intereses cobrados</div>
+            <div class="stat-value" style="font-size:20px">${fmt(interesesCobrados)}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;margin-top:4px">
+            <div style="background:rgba(255,255,255,0.6);padding:6px 10px;border-radius:8px;text-align:center">
+              <div style="color:#92400e;font-weight:600;font-size:9px;text-transform:uppercase">Normales</div>
+              <div style="font-weight:800;color:#78350f">${fmt(interesesCobradosNorm)}</div>
+              <div style="color:#a16207;font-size:9px">${pgNormales.length} pagos</div>
+            </div>
+            <div style="background:rgba(255,255,255,0.6);padding:6px 10px;border-radius:8px;text-align:center">
+              <div style="color:#92400e;font-weight:600;font-size:9px;text-transform:uppercase">Solo Int. C+I</div>
+              <div style="font-weight:800;color:#78350f">${fmt(interesesSoloCIcobrados)}</div>
+              <div style="color:#a16207;font-size:9px">${pgSoloInteresCI.length} cobros</div>
+            </div>
+            <div style="background:rgba(255,255,255,0.6);padding:6px 10px;border-radius:8px;text-align:center">
+              <div style="color:#92400e;font-weight:600;font-size:9px;text-transform:uppercase">Solo Int. IO</div>
+              <div style="font-weight:800;color:#78350f">${fmt(interesesEspCobrados)}</div>
+              <div style="color:#a16207;font-size:9px">${intEspFiltrados.length} cobros</div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="stat-card" style="border-top:3px solid #f97316;background:linear-gradient(135deg,#fff7ed 0%,#fff 100%);border-left:1px solid #d1d9e6;border-right:1px solid #d1d9e6;border-bottom:1px solid #d1d9e6"><div class="stat-ico">🚨</div><div class="stat-label" style="color:#ea580c">Multas cobradas<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:10px;margin-left:4px">+ Ganancia mora</span></div><div class="stat-value" style="font-size:16px;color:#ea580c">+${fmt(multasCobradas)}</div><div class="stat-sub">Normales + especiales</div></div>
-      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto total</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub" style="font-size:10px">${fmt(interesesCobradosNorm)} norm. + ${fmt(interesesEspCobrados)} esp. + ${fmt(multasCobradas)} multas</div></div>
+      <div class="stat-card purple"><div class="stat-ico">🏆</div><div class="stat-label">Beneficio neto total</div><div class="stat-value" style="font-size:16px">${fmt(beneficioNeto)}</div><div class="stat-sub" style="font-size:10px">${fmt(interesesCobrados)} int. + ${fmt(multasCobradas)} multas</div></div>
     </div>
     <div class="two-col">
       <div class="card">
