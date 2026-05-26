@@ -2300,24 +2300,26 @@ function pgMostrarCuotas(){
   const fmtP=n=>monedaP+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
   const pct=p.totalPagar>0?Math.round(totalAbonado/p.totalPagar*100):0;
   // Calcular intereses pagados y pendientes (incluye pagos parciales)
+  // NOTA: cuotas de Solo Interés (capital=0) NO cuentan como interés del préstamo pagado
+  // son ingresos extra, igual que multas
   const cuotasPagadas=p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO');
-  // Para parciales: si el abono cubre el interés, se cuenta el interés; proporcional si no
   const interesPagado=p.cuotas.reduce((a,cu)=>{
     const est=calcEstadoCuota(cu);
+    // Si capital=0 es una cuota de Solo Interés — no contar como interés del préstamo
+    if(cu.capital===0) return a;
     if(est==='PAGADO') return a+cu.interes;
     if(est==='PARCIAL'&&cu.abono>0){
-      // Si el abono >= interés, el interés está pagado
       return a+Math.min(cu.interes,cu.abono);
     }
     return a;
   },0);
   const interesPendiente=p.totalInteres-interesPagado;
-  // Capital pagado: cuotas completas + porción de capital en pagos parciales
+  // Capital pagado: cuotas completas con capital real (excluye cuotas Solo Interés)
   const capitalPagado=p.cuotas.reduce((a,cu)=>{
     const est=calcEstadoCuota(cu);
+    if(cu.capital===0) return a; // Solo Interés — no aporta capital
     if(est==='PAGADO') return a+cu.capital;
     if(est==='PARCIAL'&&cu.abono>0){
-      // Capital pagado = abono - interés cobrado (lo que sobra del abono va a capital)
       const capAb=Math.max(0,cu.abono-cu.interes);
       return a+Math.min(cu.capital,capAb);
     }
