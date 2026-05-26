@@ -2231,7 +2231,7 @@ function renderPagos(){
           <td><div style="display:flex;gap:4px">
             ${!pg.tipo||pg.tipo!=='ABONO'?`<button class="btn btn-secondary btn-sm" onclick="imprimirRecibo('${pg.id}')">🖨️</button>`:''}
             ${pg.tipo==='INTERES_ESP'?`<button class="btn btn-secondary btn-sm" onclick="intEspEditar('${pg.id}')" title="Editar cobro especial">✏️</button>`:''}
-            ${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="${(pg.tipo==='INTERES_ESP'||pg.tipo==='INTERES_SOLO')?`intEspEliminar('${pg.id}')`:pg.tipo==='ABONO'?`abEliminar('${pg.id}')`: `pgEliminarPago('${pg.id}')`}">🗑</button>`:''}
+            ${can('usuarios')?`<button class="btn btn-red btn-sm" onclick="${pg.tipo==='INTERES_ESP'?`intEspEliminar('${pg.id}')`:pg.tipo==='INTERES_SOLO'?`intSoloEliminar('${pg.id}')`:pg.tipo==='ABONO'?`abEliminar('${pg.id}')`: `pgEliminarPago('${pg.id}')`}">🗑</button>`:''}
           </div></td>
         </tr>`).join('')||'<tr><td colspan="10" style="text-align:center;color:var(--gray);padding:20px">Sin registros</td></tr>'}
         </tbody>
@@ -3250,24 +3250,28 @@ function intEspRegistrar(idPrestamo, numCuota){
     const capitalCuota=parseFloat(cu.capital||0);
     const interesFijo=parseFloat(cu.interes||0);
 
-    // ── CORRECCIÓN: La cuota original NO se toca ──────────────
-    // Capital, interés, amortización y estado quedan exactamente
-    // igual. Solo se registra el cobro del interés como ingreso
-    // y se agrega una cuota nueva limpia al final.
-    // ──────────────────────────────────────────────────────────
+    // 1. Cuota original: capital=0, solo cobra el interés → PAGADO
+    cu.capital=0;
+    cu.amortizacion=interesFijo;
+    cu.abono=parseFloat(((cu.abono||0)+interes+multa).toFixed(2));
+    cu.multa=parseFloat(((cu.multa||0)+multa).toFixed(2));
+    cu.fechaPago=fecha;
+    cu.cobrador=cobrador;
+    cu.metodo=metodo;
+    cu.notas=notas;
+    cu.estado=cu.abono>=cu.amortizacion?'PAGADO':'PARCIAL';
 
-    // 1. Registrar cobro en historial de pagos
+    // 2. Registrar en historial de pagos
     DB.pagos.push({
       id:uid(),idPrestamo,idCliente:p.idCliente,nombreCliente:p.nombreCliente,
       numCuota,monto:interes,multa,fecha,metodo,cobrador,notas,moneda:monedaP,
       tipo:'INTERES_SOLO',
       fechaVencimiento:cu.fechaCuota,
-      estadoCuota:calcEstadoCuota(cu),
+      estadoCuota:'PAGADO',
       registradoPor:currentUser.username
     });
 
-    // 2. Agregar 1 cuota NUEVA al final con mismo capital+interés
-    // La cuota original sigue pendiente/vencida con su balance completo
+    // 3. Cuota nueva al final con capital+interés completos (sin flags)
     const ultimaCuota=p.cuotas[p.cuotas.length-1];
     const nuevaFecha=intEspAvanzarFecha(ultimaCuota.fechaCuota,p.formaPago);
     const nuevaNum=p.cuotas.length+1;
@@ -3285,7 +3289,7 @@ function intEspRegistrar(idPrestamo, numCuota){
     sDB('prestamos');sDB('pagos');
     addLog('PAGO','Solo Interés cobrado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | '+fmtP(interes)+' int. + '+fmtP(multa)+' multa | Nueva cuota #'+nuevaNum+' al final | '+cobrador);
     closeModal();
-    toast('💰 '+fmtP(interes+multa)+' cobrado — Cuota #'+numCuota+' sigue pendiente. Nueva cuota #'+nuevaNum+' agregada al final','success');
+    toast('💰 '+fmtP(interes+multa)+' cobrado — Cuota #'+numCuota+' PAGADO. Nueva cuota #'+nuevaNum+' agregada al final','success');
     pgMostrarCuotas();
     return;
   }
@@ -3701,6 +3705,76 @@ function abEliminar(id){
 function abEliminarConfirm(id){
   DB.abonos=DB.abonos.filter(x=>x.id!==id);
   sDB('abonos');closeModal();toast('Abono eliminado');renderAbonos();
+}
+
+function intSoloEliminar(id){
+  const pg=DB.pagos.find(x=>x.id===id&&x.tipo==='INTERES_SOLO');
+  if(!pg){toast('Pago no encontrado','error');return;}
+  const p=DB.prestamos.find(x=>x.id===pg.idPrestamo);
+  if(!p){toast('Préstamo no encontrado','error');return;}
+  const cu=p.cuotas.find(x=>x.num===pg.numCuota);
+  if(!cu){toast('Cuota no encontrada','error');return;}
+  openModal('🗑 Eliminar cobro Solo Interés',`
+    <div class="alert alert-warning">¿Eliminar este cobro de Solo Interés?</div>
+    <div style="font-size:13px;margin-top:8px">
+      <strong>Préstamo:</strong> ${escHtml(pg.idPrestamo)} — ${escHtml(pg.nombreCliente)}<br>
+      <strong>Cuota #${pg.numCuota}</strong> | Fecha cobro: ${fmtDate(pg.fecha)}<br>
+      <strong>Interés:</strong> ${fmt(pg.monto)} | <strong>Multa:</strong> ${fmt(pg.multa||0)}
+    </div>
+    <div class="alert alert-info" style="margin-top:8px">🔄 La cuota original se restaurará con su capital e interés, y la cuota extra agregada al final será eliminada.</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="intSoloEliminarConfirm('${id}')">🗑 Eliminar</button>`);
+}
+function intSoloEliminarConfirm(id){
+  const pg=DB.pagos.find(x=>x.id===id&&x.tipo==='INTERES_SOLO');
+  if(!pg)return;
+  const p=DB.prestamos.find(x=>x.id===pg.idPrestamo);
+  if(!p)return;
+  const cu=p.cuotas.find(x=>x.num===pg.numCuota);
+
+  // 1. Restaurar cuota original: recuperar capital e interés originales del préstamo
+  if(cu){
+    const tasa=parseFloat(p.tasa||0)/100;
+    const numC=parseFloat(p.numCuotas||1);
+    // Calcular capital e interés por cuota según modalidad
+    let capitalOriginal, interesOriginal;
+    if(p.modalidad==='interest_only'){
+      capitalOriginal=parseFloat(p.capital||0);
+      interesOriginal=parseFloat((p.capital*tasa).toFixed(2));
+    } else {
+      capitalOriginal=parseFloat((p.capital/numC).toFixed(2));
+      interesOriginal=parseFloat((p.capital*tasa).toFixed(2));
+    }
+    cu.capital=capitalOriginal;
+    cu.interes=interesOriginal;
+    cu.amortizacion=parseFloat((capitalOriginal+interesOriginal).toFixed(2));
+    cu.abono=0;
+    cu.multa=0;
+    cu.fechaPago=null;
+    cu.cobrador=null;
+    cu.metodo=null;
+    cu.notas='';
+    cu.estado='PENDIENTE';
+  }
+
+  // 2. Eliminar la cuota extra que se agregó al final para este cobro
+  // Es la última cuota con mismo capital+interés que fue agregada después del cobro
+  const totalCuotasOriginales=parseFloat(p.numCuotas||0);
+  if(p.cuotas.length>totalCuotasOriginales){
+    // Eliminar la última cuota (la que se agregó por el Solo Interés)
+    p.cuotas=p.cuotas.slice(0,-1);
+    // Renumerar por si acaso
+    p.cuotas.forEach((c,i)=>c.num=i+1);
+  }
+
+  // 3. Eliminar el pago del historial
+  DB.pagos=DB.pagos.filter(x=>x.id!==id);
+
+  sDB('prestamos');sDB('pagos');
+  addLog('PAGO',`Solo Interés revertido - Prestamo:${pg.idPrestamo} Cuota:#${pg.numCuota} | Cuota restaurada`);
+  closeModal();
+  toast('✅ Cobro eliminado y cuota restaurada','success');
+  renderPagos();
 }
 
 function intEspEliminar(id){
