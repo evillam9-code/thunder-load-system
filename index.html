@@ -2308,8 +2308,13 @@ function pgMostrarCuotas(){
   const interesNormalPagado=p.cuotas.reduce((a,cu)=>{
     const est=calcEstadoCuota(cu);
     if(cu.capital===0) return a; // Solo Interés — se cuenta aparte
-    if(est==='PAGADO') return a+cu.interes;
-    if(est==='PARCIAL'&&cu.abono>0) return a+Math.min(cu.interes,cu.abono);
+    if(est==='PAGADO') return a+(cu._interesOriginal||cu.interes);
+    if(est==='PARCIAL'&&cu.abono>0){
+      // Abono anticipado: no cobró interés, todo fue a capital
+      const esAnticipado=cu.fechaPago&&cu.fechaCuota&&cu.fechaPago<cu.fechaCuota;
+      if(esAnticipado) return a;
+      return a+Math.min(cu._interesOriginal||cu.interes,cu.abono);
+    }
     return a;
   },0);
   // Interés cobrado por Solo Interés (cuotas con capital=0)
@@ -2326,10 +2331,14 @@ function pgMostrarCuotas(){
   const capitalPagado=p.cuotas.reduce((a,cu)=>{
     const est=calcEstadoCuota(cu);
     if(cu.capital===0) return a;
-    if(est==='PAGADO') return a+cu.capital;
+    if(est==='PAGADO') return a+(cu._capitalOriginal||cu.capital);
     if(est==='PARCIAL'&&cu.abono>0){
-      const capAb=Math.max(0,cu.abono-cu.interes);
-      return a+Math.min(cu.capital,capAb);
+      // Si el abono fue anticipado (fechaPago < fechaCuota), todo el abono fue a capital
+      const esAnticipado=cu.fechaPago&&cu.fechaCuota&&cu.fechaPago<cu.fechaCuota;
+      if(esAnticipado) return a+Math.min(cu._capitalOriginal||cu.capital,cu.abono);
+      // Si vencido: el abono cubre interes primero, resto al capital
+      const capAb=Math.max(0,cu.abono-(cu._interesOriginal||cu.interes));
+      return a+Math.min(cu._capitalOriginal||cu.capital,capAb);
     }
     return a;
   },0);
@@ -3424,7 +3433,19 @@ function abRegistrarDesdeModal(){
   const notas=document.getElementById('ab-notas')?.value||'';
   const p=DB.prestamos.find(x=>x.id===idPrestamo);
   if(!p){toast('Préstamo no encontrado','error');return;}
-  const capitalPagado=p.cuotas.filter(cu=>calcEstadoCuota(cu)==='PAGADO').reduce((a,cu)=>a+cu.capital,0);
+  // Capital pendiente: cuotas pagadas + abonos anticipados ya aplicados a capital
+  const capitalPagado=p.cuotas.reduce((a,cu)=>{
+    const est=calcEstadoCuota(cu);
+    if(cu.capital===0) return a;
+    if(est==='PAGADO') return a+(cu._capitalOriginal||cu.capital);
+    if(est==='PARCIAL'&&cu.abono>0){
+      const esAnticipado=cu.fechaPago&&cu.fechaCuota&&cu.fechaPago<cu.fechaCuota;
+      if(esAnticipado) return a+Math.min(cu._capitalOriginal||cu.capital,cu.abono);
+      const capAb=Math.max(0,cu.abono-(cu._interesOriginal||cu.interes));
+      return a+Math.min(cu._capitalOriginal||cu.capital,capAb);
+    }
+    return a;
+  },0);
   const capitalPendiente=parseFloat((p.capital-capitalPagado).toFixed(2));
   const fmtP=n=>(p.moneda||'RD$')+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
   if(monto>capitalPendiente+0.01){toast('El abono ('+fmtP(monto)+') supera el capital pendiente ('+fmtP(capitalPendiente)+')','error');return;}
@@ -3744,8 +3765,8 @@ function abEliminarConfirm(id){
         // Regenerar cuotas limpias
         p.cuotas=calcAmortizacion(p.capital,p.tasa,p.numCuotas,fechaBase,p.formaPago,p.modalidad||'capital_interes');
         p.estado='ACTIVO';
-        // Limpiar pagos de origen abono de este prestamo
-        DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.origenAbono));
+        // Limpiar SOLO pagos de origen abono — los pagos normales de cuotas se conservan
+        DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.origenAbono===true));
         // Reaplicar abonos restantes en orden cronologico
         const abonosRestantes=(DB.abonos||[]).filter(x=>x.idPrestamo===idPrestamo).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
         abonosRestantes.forEach(ab=>{
