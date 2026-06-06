@@ -3587,22 +3587,34 @@ function abRecalcular(p, montoAbono, fechaAbono){
       const interesCuota = cu._interesOriginal || cu.interes;
       const interesYaCobrado = (cu.abono||0) >= interesCuota;
 
+      // ¿El abono es anticipado? (fecha del abono < fecha de vencimiento de la cuota)
+      const esAnticipado = fechaAb < cu.fechaCuota;
+
       if(saldo >= capPend){
         // Abono cubre todo el capital pendiente
         cu._abonoCapital = parseFloat(((cu._abonoCapital||0) + capPend).toFixed(2));
         cu.capital = 0;
-        cu.abono = parseFloat((interesYaCobrado ? interesCuota : (cu.abono||0)) + capPend).toFixed(2);
-        cu.abono = parseFloat(cu.abono);
-        // Si el interés ya fue cobrado, la cuota queda PAGADA
-        if(interesYaCobrado){
-          cu.amortizacion = parseFloat((interesCuota + capPend).toFixed(2));
-          cu.estado = 'PAGADO';
-          cu.fechaPago = fechaAb;
-        } else {
-          // Solo se redujo el capital; el interés aún queda pendiente
+        if(esAnticipado){
+          // Anticipado: no se cobra interés todavía — la cuota solo queda PARCIAL
+          // (el interés se cobrará cuando llegue la fecha)
+          cu.abono = parseFloat(((cu.abono||0) + capPend).toFixed(2));
           cu.amortizacion = parseFloat((interesCuota).toFixed(2));
           cu.estado = 'PARCIAL';
           cu.fechaPago = fechaAb;
+        } else {
+          cu.abono = parseFloat((interesYaCobrado ? interesCuota : (cu.abono||0)) + capPend).toFixed(2);
+          cu.abono = parseFloat(cu.abono);
+          // Si el interés ya fue cobrado, la cuota queda PAGADA
+          if(interesYaCobrado){
+            cu.amortizacion = parseFloat((interesCuota + capPend).toFixed(2));
+            cu.estado = 'PAGADO';
+            cu.fechaPago = fechaAb;
+          } else {
+            // Solo se redujo el capital; el interés aún queda pendiente
+            cu.amortizacion = parseFloat((interesCuota).toFixed(2));
+            cu.estado = 'PARCIAL';
+            cu.fechaPago = fechaAb;
+          }
         }
         saldo = parseFloat((saldo - capPend).toFixed(2));
       } else {
@@ -3610,8 +3622,11 @@ function abRecalcular(p, montoAbono, fechaAbono){
         cu._abonoCapital = parseFloat(((cu._abonoCapital||0) + saldo).toFixed(2));
         cu.capital = parseFloat((capPend - saldo).toFixed(2));
         cu.abono = parseFloat(((cu.abono||0) + saldo).toFixed(2));
-        // La amortizacion ahora es interés fijo + capital reducido
-        cu.amortizacion = parseFloat((interesCuota + cu.capital).toFixed(2));
+        // Si es anticipado, la amortizacion es solo el capital reducido (sin interés aún)
+        // Si es vencido, la amortizacion incluye interés + capital reducido
+        cu.amortizacion = esAnticipado
+          ? parseFloat((cu.capital).toFixed(2))
+          : parseFloat((interesCuota + cu.capital).toFixed(2));
         cu.estado = 'PARCIAL';
         cu.fechaPago = fechaAb;
         saldo = 0;
@@ -3713,8 +3728,37 @@ function abEliminar(id){
      <button class="btn btn-red" onclick="abEliminarConfirm('${id}')">Eliminar</button>`);
 }
 function abEliminarConfirm(id){
+  // Identificar el prestamo afectado antes de eliminar
+  const abonoElim=DB.abonos.find(x=>x.id===id);
+  const idPrestamo=abonoElim?abonoElim.idPrestamo:null;
+
+  // Eliminar el abono
   DB.abonos=DB.abonos.filter(x=>x.id!==id);
-  sDB('abonos');closeModal();toast('Abono eliminado');renderAbonos();
+
+  // Restaurar las cuotas del prestamo desde cero y reaplicar abonos restantes
+  if(idPrestamo){
+    const p=DB.prestamos.find(x=>x.id===idPrestamo);
+    if(p){
+      const fechaBase=p.fechaSolicitud||p.fechaInicio||p.fechaDesembolso;
+      if(fechaBase){
+        // Regenerar cuotas limpias
+        p.cuotas=calcAmortizacion(p.capital,p.tasa,p.numCuotas,fechaBase,p.formaPago,p.modalidad||'capital_interes');
+        p.estado='ACTIVO';
+        // Limpiar pagos de origen abono de este prestamo
+        DB.pagos=DB.pagos.filter(x=>!(x.idPrestamo===idPrestamo&&x.origenAbono));
+        // Reaplicar abonos restantes en orden cronologico
+        const abonosRestantes=(DB.abonos||[]).filter(x=>x.idPrestamo===idPrestamo).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+        abonosRestantes.forEach(ab=>{
+          abRecalcular(p,ab.monto,ab.fecha);
+          abRegistrarPagosEnHistorial(p,ab.monto,ab.fecha,ab.metodo,ab.registradoPor||ab.cobrador);
+        });
+        sDB('prestamos');sDB('pagos');
+        addLog('PAGO','Abono eliminado y cuotas recalculadas - Prestamo:'+idPrestamo);
+      }
+    }
+  }
+
+  sDB('abonos');closeModal();toast('Abono eliminado y cuotas restauradas','success');renderAbonos();
 }
 
 function intSoloEliminar(id){
