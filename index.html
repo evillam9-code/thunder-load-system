@@ -728,6 +728,7 @@ function _ejecutarLogin(user){
   // Reparar cuotas dañadas cada vez que el usuario entra
   setTimeout(repararCuotasInterestOnly, 600);
   setTimeout(repararCuotasMalMarcadas, 900);
+  setTimeout(migrarCanceladoASaldado, 1000);
   setTimeout(repararIntEspCapitalInteres,1200);
   document.getElementById('login-error').style.display='none';
   document.getElementById('login-screen').style.display='none';
@@ -1129,7 +1130,7 @@ function calcMulta(cuota,pct){
 
 function semaforoCliente(idCliente){
   const cuotasCliente=[];
-  DB.prestamos.filter(p=>p.idCliente===idCliente&&p.estado!=='CANCELADO').forEach(pr=>{
+  DB.prestamos.filter(p=>p.idCliente===idCliente&&p.estado!=='CANCELADO'&&p.estado!=='SALDADO').forEach(pr=>{
     pr.cuotas.forEach(c=>{
       const est=calcEstadoCuota(c);
       if(est==='VENCIDA') cuotasCliente.push(c);
@@ -1316,7 +1317,7 @@ function renderDashboard(){
 
 function renderGraficaCartera(){
   const activos=DB.prestamos.filter(p=>p.estado==='ACTIVO').length;
-  const cancelados=DB.prestamos.filter(p=>p.estado==='CANCELADO').length;
+  const cancelados=DB.prestamos.filter(p=>p.estado==='SALDADO').length;
   const total=DB.prestamos.length||1;
   const pctActivo=Math.round(activos/total*100);
   const pctCancelado=Math.round(cancelados/total*100);
@@ -1333,7 +1334,7 @@ function renderGraficaCartera(){
       <div class="progress-bar"><div class="progress-fill" style="width:${pctActivo}%;background:var(--blue)"></div></div>
     </div>
     <div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Préstamos cancelados</span><strong style="color:var(--green)">${cancelados}</strong></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Préstamos saldados</span><strong style="color:var(--green)">${cancelados}</strong></div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pctCancelado}%;background:var(--green)"></div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px">
@@ -1548,7 +1549,7 @@ function clVerHistorial(idCliente){
 }
 
 function badgeEstado(estado){
-  const m={ACTIVO:'badge-blue',CANCELADO:'badge-green',VENCIDO:'badge-red',PENDIENTE:'badge-amber'};
+  const m={ACTIVO:'badge-blue',SALDADO:'badge-green',CANCELADO:'badge-gray',VENCIDO:'badge-red',PENDIENTE:'badge-amber'};
   return`<span class="badge ${m[estado]||'badge-gray'}">${estado}</span>`;
 }
 
@@ -1798,6 +1799,7 @@ function renderPrestamos(){
           <select id="pr-filtro" onchange="renderPrestamos()" style="width:auto;padding:8px 12px">
             <option value="TODOS">Todos</option>
             <option value="ACTIVO">Activos</option>
+            <option value="SALDADO">Saldados</option>
             <option value="CANCELADO">Cancelados</option>
           </select>
         </div>
@@ -1809,7 +1811,7 @@ function renderPrestamos(){
           const cuotasPagadas=p.cuotas.filter(c=>calcEstadoCuota(c)==='PAGADO').length;
           const cuotasVenc=p.cuotas.filter(c=>calcEstadoCuota(c)==='VENCIDA').length;
           const totalAbonado=p.cuotas.reduce((a,c)=>a+c.abono,0);
-          const saldo=p.totalPagar-totalAbonado;
+          const saldo=p.estado==='SALDADO'?0:p.totalPagar-totalAbonado;
           return`<tr>
             <td class="mono" style="font-weight:700">${escHtml(p.id)}</td>
             <td>${fmtDate(p.fechaSolicitud)}</td>
@@ -2084,8 +2086,8 @@ function editarPagoGuardar(idPrestamo,numCuota){
 
   // Verificar si el préstamo quedó cancelado o debe reactivarse
   const todasPag=p.cuotas.every(x=>calcEstadoCuota(x)==='PAGADO');
-  if(todasPag) p.estado='CANCELADO';
-  else if(p.estado==='CANCELADO') p.estado='ACTIVO';
+  if(todasPag) p.estado='SALDADO';
+  else if(p.estado==='SALDADO') p.estado='ACTIVO';
 
   sDB('prestamos');
   addLog('PAGO','Pago editado - Prestamo:'+idPrestamo+' Cuota:#'+numCuota+' | Capital:'+c.capital+' Interes:'+c.interes+' | '+estadoSel+' | '+cobrador);
@@ -2614,7 +2616,7 @@ function pgConfirmarPagoMonto(idPrestamo,numCuota,monto,multa,fecha,metodo,cobra
 
   // Actualizar estado del préstamo
   const todasPagadas=p.cuotas.every(x=>calcEstadoCuota(x)==='PAGADO');
-  if(todasPagadas)p.estado='CANCELADO';
+  if(todasPagadas)p.estado='SALDADO';
   sDB('prestamos');
 
   // Registrar pago en historial (cada pago queda como entrada separada)
@@ -3689,7 +3691,7 @@ function abRecalcular(p, montoAbono, fechaAbono){
 
     // Verificar si el préstamo quedó cancelado
     const todasPagadas = p.cuotas.every(cu => calcEstadoCuota(cu) === 'PAGADO');
-    if(todasPagadas) p.estado = 'CANCELADO';
+    if(todasPagadas) p.estado = 'SALDADO';
     return;
   }
 
@@ -3771,7 +3773,7 @@ function abRecalcular(p, montoAbono, fechaAbono){
 
   // Verificar si el préstamo quedó cancelado
   const todasPagadas = p.cuotas.every(cu => calcEstadoCuota(cu) === 'PAGADO');
-  if(todasPagadas) p.estado = 'CANCELADO';
+  if(todasPagadas) p.estado = 'SALDADO';
 }
 
 
@@ -5419,6 +5421,7 @@ window.fbIniciar = async function(){
       // Reparar cuotas dañadas por bug anterior
       setTimeout(repararCuotasInterestOnly,500);
       setTimeout(repararCuotasMalMarcadas,800);
+      setTimeout(migrarCanceladoASaldado,900);
       setTimeout(repararIntEspCapitalInteres,1100);
 
       // Proteger sesión activa
@@ -5527,9 +5530,9 @@ function repararCuotasInterestOnly(){
       }
     });
 
-    // Reactivar préstamo si fue marcado CANCELADO por bug
+    // Reactivar préstamo si fue marcado SALDADO por bug
     const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
-    if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
+    if(p.estado==='SALDADO'&&cuotasSinPagar.length>0){
       p.estado='ACTIVO';
       reparadas++;
     }
@@ -5575,11 +5578,11 @@ function repararCuotasMalMarcadas(){
       }
     });
 
-    // Reactivar préstamo si fue mal marcado como CANCELADO
+    // Reactivar préstamo si fue mal marcado como SALDADO
     const cuotasSinPagar=p.cuotas.filter(c=>calcEstadoCuota(c)!=='PAGADO');
-    if(p.estado==='CANCELADO'&&cuotasSinPagar.length>0){
+    if(p.estado==='SALDADO'&&cuotasSinPagar.length>0){
       p.estado='ACTIVO';
-      console.warn('[Repair] '+p.id+': CANCELADO→ACTIVO');
+      console.warn('[Repair] '+p.id+': SALDADO→ACTIVO');
       reparadas++;
     }
   });
@@ -5587,6 +5590,24 @@ function repararCuotasMalMarcadas(){
     sDB('prestamos');
     console.log('Thunder Load: '+reparadas+' cuotas mal marcadas corregidas');
     addLog('CONFIG','Reparación automática: '+reparadas+' cuotas con estado incorrecto corregidas');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// MIGRACIÓN: Préstamos completamente pagados que quedaron marcados
+// como CANCELADO (nombre antiguo) pasan a SALDADO
+// ══════════════════════════════════════════════════════════════
+function migrarCanceladoASaldado(){
+  let migrados=0;
+  (DB.prestamos||[]).forEach(p=>{
+    if(p.estado==='CANCELADO'&&p.cuotas.every(c=>calcEstadoCuota(c)==='PAGADO')){
+      p.estado='SALDADO';
+      migrados++;
+    }
+  });
+  if(migrados>0){
+    sDB('prestamos');
+    console.log('Thunder Load: '+migrados+' préstamos migrados de CANCELADO a SALDADO');
   }
 }
 
